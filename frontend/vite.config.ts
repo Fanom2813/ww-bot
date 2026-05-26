@@ -1,5 +1,7 @@
+import path from "path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import wails from "@wailsio/runtime/plugins/vite";
 
 // https://vitejs.dev/config/
@@ -9,5 +11,10 @@ export default defineConfig({
     port: Number(process.env.WAILS_VITE_PORT) || 9245,
     strictPort: true,
   },
-  plugins: [react(), wails("./bindings")],
+  plugins: [react(), tailwindcss(), wails("./bindings")],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
 });
