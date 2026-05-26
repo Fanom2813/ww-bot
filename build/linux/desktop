@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=WW Bot
+Comment=WhatsApp AI reply assistant
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/ww-bot %u
+Terminal=false
+Type=Application
+Icon=ww-bot
+Categories=Utility;
+StartupWMClass=ww-bot
+
+ 

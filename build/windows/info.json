@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "ww-bot",
+			"FileDescription": "WhatsApp AI reply assistant",
+			"LegalCopyright": "© 2026, My Company",
+			"ProductName": "WW Bot",
+			"Comments": "This is a comment"
+		}
+	}
+}
