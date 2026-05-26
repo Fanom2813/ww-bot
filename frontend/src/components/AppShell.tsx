@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Route, Routes } from "react-router";
 import {
   Activity as ActivityIcon,
@@ -10,6 +10,7 @@ import {
   Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ControlService } from "@/lib/api";
 import { Dashboard } from "@/pages/Dashboard";
 import { Approvals } from "@/pages/Approvals";
 import { Contacts } from "@/pages/Contacts";
@@ -25,8 +26,17 @@ const NAV = [
 ];
 
 export function AppShell({ jid }: { jid: string }) {
-  // TODO: wire to the backend kill-switch; currently local UI state only.
   const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    ControlService.Paused().then(setPaused).catch(() => {});
+  }, []);
+
+  const togglePause = () => {
+    const next = !paused;
+    const op = next ? ControlService.Pause() : ControlService.Resume();
+    op.then(() => setPaused(next)).catch(() => {});
+  };
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -69,7 +79,7 @@ export function AppShell({ jid }: { jid: string }) {
             {jid && ` · ${shortJid(jid)}`}
           </div>
           <button
-            onClick={() => setPaused((p) => !p)}
+            onClick={togglePause}
             className="flex w-full items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
           >
             <Power className="h-4 w-4" />
