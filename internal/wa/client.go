@@ -1,0 +1,183 @@
+// Package wa is a thin, UI-agnostic wrapper around the whatsmeow WhatsApp
+// client. It owns the connection and session store, and surfaces normalized
+// events (QR, Paired, Message, Call, ...) on a single channel. Nothing outside
+// this package imports whatsmeow, so the rest of the app — terminal harness or
+// Wails GUI alike — depends only on these stable types.
+package wa
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+
+	_ "github.com/mattn/go-sqlite3" // registers the "sqlite3" database/sql driver
+
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
+)
+
+// Config configures a Client.
+type Config struct {
+	// SessionDSN is the SQLite DSN for the encrypted session store, e.g.
+	// "file:wwbot-session.db?_foreign_keys=on".
+	SessionDSN string
+	// LogLevel for whatsmeow's internal loggers: DEBUG, INFO, WARN, or ERROR.
+	// Defaults to WARN.
+	LogLevel string
+}
+
+// Client wraps a whatsmeow client and emits normalized events on Events().
+type Client struct {
+	wm        *whatsmeow.Client
+	container *sqlstore.Container
+	events    chan Event
+	closeOnce sync.Once
+}
+
+// New opens the session store and constructs a Client. It does not connect;
+// call Start for that.
+func New(ctx context.Context, cfg Config) (*Client, error) {
+	if cfg.SessionDSN == "" {
+		return nil, errors.New("wa: SessionDSN is required")
+	}
+	level := cfg.LogLevel
+	if level == "" {
+		level = "WARN"
+	}
+
+	container, err := sqlstore.New(ctx, "sqlite3", cfg.SessionDSN, waLog.Stdout("wa-db", level, true))
+	if err != nil {
+		return nil, fmt.Errorf("wa: open session store: %w", err)
+	}
+	device, err := container.GetFirstDevice(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("wa: load device: %w", err)
+	}
+
+	c := &Client{
+		wm:        whatsmeow.NewClient(device, waLog.Stdout("wa", level, true)),
+		container: container,
+		events:    make(chan Event, 256),
+	}
+	c.wm.AddEventHandler(c.onEvent)
+	return c, nil
+}
+
+// Events returns the channel of normalized events. A single consumer should
+// range over it; it is closed by Stop.
+func (c *Client) Events() <-chan Event { return c.events }
+
+// IsPaired reports whether a session already exists (i.e. no QR is needed).
+func (c *Client) IsPaired() bool { return c.wm.Store.ID != nil }
+
+// Start connects to WhatsApp. If not yet paired, it begins the QR pairing flow,
+// emitting QR events (and a Paired event on success). If already paired, it
+// reconnects using the stored session — no QR.
+func (c *Client) Start(ctx context.Context) error {
+	if c.IsPaired() {
+		if err := c.wm.Connect(); err != nil {
+			return fmt.Errorf("wa: connect: %w", err)
+		}
+		return nil
+	}
+
+	qrChan, err := c.wm.GetQRChannel(ctx)
+	if err != nil {
+		return fmt.Errorf("wa: qr channel: %w", err)
+	}
+	if err := c.wm.Connect(); err != nil {
+		return fmt.Errorf("wa: connect: %w", err)
+	}
+	go c.pumpQR(qrChan)
+	return nil
+}
+
+// SendText sends a plain text message to the given JID string (e.g.
+// "12345@s.whatsapp.net"). In the full app, every outbound message funnels
+// through the safety gate before reaching this method.
+func (c *Client) SendText(ctx context.Context, to, text string) error {
+	jid, err := types.ParseJID(to)
+	if err != nil {
+		return fmt.Errorf("wa: parse jid %q: %w", to, err)
+	}
+	if _, err := c.wm.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(text)}); err != nil {
+		return fmt.Errorf("wa: send: %w", err)
+	}
+	return nil
+}
+
+// Stop disconnects from WhatsApp and closes the events channel.
+func (c *Client) Stop() {
+	c.wm.Disconnect()
+	c.closeOnce.Do(func() { close(c.events) })
+}
+
+// pumpQR forwards whatsmeow's QR-channel items as normalized events.
+func (c *Client) pumpQR(qrChan <-chan whatsmeow.QRChannelItem) {
+	for item := range qrChan {
+		switch item.Event {
+		case "code":
+			c.emit(QR{Code: item.Code})
+		case "success":
+			var id string
+			if c.wm.Store.ID != nil {
+				id = c.wm.Store.ID.String()
+			}
+			c.emit(Paired{JID: id})
+		}
+		// "timeout"/"error" simply close the channel; the consumer can react
+		// to the absence of a Paired event.
+	}
+}
+
+// onEvent translates whatsmeow events into our normalized ones. It runs on
+// whatsmeow's dispatch goroutine, so it must not block for long; emit uses a
+// generously buffered channel.
+func (c *Client) onEvent(raw any) {
+	switch v := raw.(type) {
+	case *events.Message:
+		c.emit(toMessage(v))
+	case *events.CallOffer:
+		c.emit(Call{FromJID: v.From.String(), Group: v.GroupJID.Server != ""})
+	case *events.CallOfferNotice:
+		c.emit(Call{FromJID: v.From.String(), Video: v.Media == "video", Group: v.Type == "group"})
+	case *events.Connected:
+		c.emit(Connected{})
+	case *events.LoggedOut:
+		c.emit(LoggedOut{})
+	}
+}
+
+func (c *Client) emit(e Event) { c.events <- e }
+
+func toMessage(v *events.Message) Message {
+	text := v.Message.GetConversation()
+	if ext := v.Message.GetExtendedTextMessage(); ext != nil {
+		text = ext.GetText()
+	}
+	kind := KindOther
+	switch {
+	case text != "":
+		kind = KindText
+	case v.Message.GetAudioMessage() != nil:
+		kind = KindVoice
+	case v.Message.GetImageMessage() != nil:
+		kind = KindImage
+	}
+	return Message{
+		ChatJID:   v.Info.Chat.String(),
+		SenderJID: v.Info.Sender.String(),
+		PushName:  v.Info.PushName,
+		Kind:      kind,
+		Text:      text,
+		Timestamp: v.Info.Timestamp,
+		IsFromMe:  v.Info.IsFromMe,
+		IsGroup:   v.Info.IsGroup,
+	}
+}
