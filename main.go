@@ -4,41 +4,30 @@ import (
 	"embed"
 	_ "embed"
 	"log"
-	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// Wails uses Go's `embed` package to embed the frontend files into the binary.
-// Any files in the frontend/dist folder will be embedded into the binary and
-// made available to the frontend.
+// Wails embeds the built frontend (frontend/dist) into the binary.
 // See https://pkg.go.dev/embed for more information.
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func init() {
-	// Register a custom event whose associated data type is string.
-	// This is not required, but the binding generator will pick up registered events
-	// and provide a strongly typed JS/TS API for them.
-	application.RegisterEvent[string]("time")
+	// Register the "wa" event type so the binding generator emits a strongly
+	// typed JS/TS API for WhatsApp events pushed from the backend.
+	application.RegisterEvent[WAEvent]("wa")
 }
 
-// main function serves as the application's entry point. It initializes the application, creates a window,
-// and starts a goroutine that emits a time-based event every second. It subsequently runs the application and
-// logs any error that might occur.
+// main is the application entry point: it constructs the app with the WhatsApp
+// service bound, opens the main window, and runs until exit.
 func main() {
-
-	// Create a new Wails application by providing the necessary options.
-	// Variables 'Name' and 'Description' are for application metadata.
-	// 'Assets' configures the asset server with the 'FS' variable pointing to the frontend files.
-	// 'Bind' is a list of Go struct instances. The frontend has access to the methods of these instances.
-	// 'Mac' options tailor the application when running an macOS.
 	app := application.New(application.Options{
 		Name:        "ww-bot",
-		Description: "A demo of using raw HTML & CSS",
+		Description: "WhatsApp AI reply assistant",
 		Services: []application.Service{
-			application.NewService(&GreetService{}),
+			application.NewService(&WhatsAppService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -48,37 +37,18 @@ func main() {
 		},
 	})
 
-	// Create a new window with the necessary options.
-	// 'Title' is the title of the window.
-	// 'Mac' options tailor the window when running on macOS.
-	// 'BackgroundColour' is the background colour of the window.
-	// 'URL' is the URL that will be loaded into the webview.
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "Window 1",
+		Title: "WW Bot",
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,
 			TitleBar:                application.MacTitleBarHiddenInset,
 		},
-		BackgroundColour: application.NewRGB(27, 38, 54),
+		BackgroundColour: application.NewRGB(10, 10, 10),
 		URL:              "/",
 	})
 
-	// Create a goroutine that emits an event containing the current time every second.
-	// The frontend can listen to this event and update the UI accordingly.
-	go func() {
-		for {
-			now := time.Now().Format(time.RFC1123)
-			app.Event.Emit("time", now)
-			time.Sleep(time.Second)
-		}
-	}()
-
-	// Run the application. This blocks until the application has been exited.
-	err := app.Run()
-
-	// If an error occurred while running the application, log it and exit.
-	if err != nil {
+	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
 }

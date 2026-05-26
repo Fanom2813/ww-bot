@@ -7,6 +7,7 @@ require (
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/wailsapp/wails/v3 v3.0.0-alpha.96
 	go.mau.fi/whatsmeow v0.0.0-20260525123251-933deb5f2ee9
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -59,7 +60,6 @@ require (
 	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
