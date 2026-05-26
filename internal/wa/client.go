@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3" // registers the "sqlite3" database/sql driver
 
@@ -75,6 +76,14 @@ func (c *Client) Events() <-chan Event { return c.events }
 
 // IsPaired reports whether a session already exists (i.e. no QR is needed).
 func (c *Client) IsPaired() bool { return c.wm.Store.ID != nil }
+
+// SelfJID returns the user's own (non-device) JID once paired, else "".
+func (c *Client) SelfJID() string {
+	if c.wm.Store.ID == nil {
+		return ""
+	}
+	return c.wm.Store.ID.ToNonAD().String()
+}
 
 // Start connects to WhatsApp. If not yet paired, it begins the QR pairing flow,
 // emitting QR events (and a Paired event on success). If already paired, it
@@ -142,7 +151,17 @@ func (c *Client) pumpQR(qrChan <-chan whatsmeow.QRChannelItem) {
 func (c *Client) onEvent(raw any) {
 	switch v := raw.(type) {
 	case *events.Message:
-		c.emit(toMessage(v))
+		m := toMessage(v)
+		if am := v.Message.GetAudioMessage(); am != nil {
+			// Download voice-note bytes so consumers can transcribe them.
+			dctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			if data, err := c.wm.Download(dctx, am); err == nil {
+				m.AudioData = data
+				m.AudioMime = am.GetMimetype()
+			}
+			cancel()
+		}
+		c.emit(m)
 	case *events.CallOffer:
 		c.emit(Call{FromJID: v.From.String(), Group: v.GroupJID.Server != ""})
 	case *events.CallOfferNotice:

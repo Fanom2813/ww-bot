@@ -41,6 +41,10 @@ type Message struct {
 	Timestamp time.Time
 	IsFromMe  bool
 	IsGroup   bool
+	// AudioData holds the decrypted bytes of a voice note (Kind == KindVoice),
+	// downloaded eagerly so consumers can transcribe it. Empty otherwise.
+	AudioData []byte
+	AudioMime string
 }
 
 // Call is a normalized inbound call offer. WhatsApp calls cannot be answered by
