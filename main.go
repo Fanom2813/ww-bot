@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"wwbot/internal/core"
 	"wwbot/internal/store"
@@ -57,11 +58,12 @@ func main() {
 			Handler: application.AssetFileServerFS(assets),
 		},
 		Mac: application.MacOptions{
-			ApplicationShouldTerminateAfterLastWindowClosed: true,
+			// Keep the bot running in the background when the window is closed.
+			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 	})
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "WW Bot",
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
@@ -72,7 +74,44 @@ func main() {
 		URL:              "/",
 	})
 
+	// Closing the window hides it (the bot keeps running in the tray) rather
+	// than quitting; Quit is explicit via the tray menu.
+	win.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		win.Hide()
+		e.Cancel()
+	})
+
+	setupTray(app, win, cr)
+
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// setupTray adds a menu-bar tray icon with Open / Pause / Quit so the bot can
+// run resident in the background.
+func setupTray(app *application.App, win *application.WebviewWindow, cr *core.Core) {
+	tray := app.SystemTray.New()
+	tray.SetLabel("WW")
+
+	menu := app.NewMenu()
+	menu.Add("Open WW Bot").OnClick(func(*application.Context) { win.Show() })
+	menu.AddSeparator()
+
+	pauseItem := menu.Add("Pause bot")
+	pauseItem.OnClick(func(*application.Context) {
+		if cr.Paused() {
+			cr.Resume()
+			pauseItem.SetLabel("Pause bot")
+		} else {
+			cr.Pause()
+			pauseItem.SetLabel("Resume bot")
+		}
+	})
+
+	menu.AddSeparator()
+	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
+
+	tray.SetMenu(menu)
+	tray.AttachWindow(win)
 }
