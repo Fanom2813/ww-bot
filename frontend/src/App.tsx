@@ -1,7 +1,7 @@
 import { Loader2 } from "lucide-react";
 import { useWhatsApp } from "@/lib/useWhatsApp";
 import { ConnectScreen } from "@/components/ConnectScreen";
-import { Home } from "@/components/Home";
+import { AppShell } from "@/components/AppShell";
 
 function App() {
   const { status, qr, jid, startPairing } = useWhatsApp();
@@ -15,7 +15,7 @@ function App() {
   }
 
   if (status === "connected") {
-    return <Home jid={jid} />;
+    return <AppShell jid={jid} />;
   }
 
   return <ConnectScreen status={status} qr={qr} onLink={startPairing} />;
