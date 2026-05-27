@@ -169,7 +169,7 @@ func (c *Core) registerGreetings() {
 // OnInbound is the pipeline entry point for an incoming message.
 func (c *Core) OnInbound(in Inbound) {
 	log.Printf("[core] inbound chat=%q sender=%q fromMe=%v group=%v kind=%s self=%q text=%q",
-		in.ChatJID, in.SenderJID, in.IsFromMe, in.IsGroup, in.Kind, c.selfJID, preview(in.Text))
+		in.ChatJID, in.SenderJID, in.IsFromMe, in.IsGroup, in.Kind, c.selfJID, preview(brain.Redact(in.Text)))
 
 	// Self-chat commands / daily notes. A self-chat is "note to self": you sent
 	// it (IsFromMe) and the chat is your own number. We accept either a match
@@ -177,17 +177,9 @@ func (c *Core) OnInbound(in Inbound) {
 	// differences (e.g. LID vs phone-number addressing).
 	if in.IsFromMe && in.ChatJID != "" &&
 		(in.ChatJID == c.selfJID || in.ChatJID == in.SenderJID) {
-		log.Printf("[core] -> self-command: %q", in.Text)
+		log.Printf("[core] -> self-command")
 		c.handleSelfInput(in)
 		return
-	}
-
-	// Surface unknown 1-1 senders immediately (don't wait for the reply debounce)
-	// so the "save this contact?" action shows up the moment they message.
-	if !in.IsFromMe && !in.IsGroup && in.ChatJID != "" {
-		if _, err := c.db.GetContact(c.ctx, in.ChatJID); errors.Is(err, store.ErrNotFound) {
-			c.flagUnknown(in.ChatJID, in.PushName, in.Text)
-		}
 	}
 
 	text := in.Text
@@ -197,6 +189,32 @@ func (c *Core) OnInbound(in Inbound) {
 			// Couldn't understand the audio confidently — stay silent, just note it.
 			_ = c.db.LogActivity(c.ctx, "system", in.ChatJID, "voice note not understood — skipped")
 			return
+		}
+	}
+
+	// ---- Credential gate -------------------------------------------------
+	// Single chokepoint for every incoming message: strip any secrets (codes,
+	// keys, cards, …) HERE so no raw credential can reach the brain, drafts,
+	// activity log, memory, or notifications downstream. When something is
+	// stripped we notify you, then the message keeps flowing normally — only the
+	// secret itself is replaced with [redacted].
+	if clean := brain.Redact(text); clean != text {
+		if !in.IsFromMe {
+			name := in.PushName
+			if name == "" {
+				name = "Unknown number"
+			}
+			_ = c.db.LogActivity(c.ctx, "flag", in.ChatJID, "sensitive data stripped before processing")
+			c.notify("notify", name, "Removed sensitive data (codes/credentials) from this message before processing.")
+		}
+		text = clean
+	}
+
+	// Surface unknown 1-1 senders immediately (don't wait for the reply debounce)
+	// so the "save this contact?" action shows up the moment they message.
+	if !in.IsFromMe && !in.IsGroup && in.ChatJID != "" {
+		if _, err := c.db.GetContact(c.ctx, in.ChatJID); errors.Is(err, store.ErrNotFound) {
+			c.flagUnknown(in.ChatJID, in.PushName, text)
 		}
 	}
 
@@ -389,16 +407,16 @@ func (c *Core) handleSelfInput(in Inbound) {
 		c.confirmSelf(helpText)
 		summary = "/help"
 	case commands.Today:
-		_ = c.db.SetDailyContext(c.ctx, time.Now().Format("2006-01-02"), cmd.Text)
+		c.SetToday(cmd.Text)
 		c.confirmSelf("📝 Got it — today's context updated.")
-		summary = "/today — set: " + preview(cmd.Text)
+		summary = "/today — set: " + preview(brain.Redact(cmd.Text))
 	case commands.Tier:
 		c.applyTier(cmd.Target, cmd.Tier)
 		summary = fmt.Sprintf("/tier %s → %s", cmd.Target, cmd.Tier)
 	case commands.Note:
 		c.appendToday(cmd.Text)
 		c.confirmSelf("📝 Noted for today.")
-		summary = "note added to today: " + preview(cmd.Text)
+		summary = "note added to today: " + preview(brain.Redact(cmd.Text))
 	case commands.Unknown:
 		c.confirmSelf("Unknown command. " + helpText)
 		summary = "unknown command: " + preview(in.Text)
@@ -438,6 +456,7 @@ func (c *Core) resolveContact(target string) string {
 }
 
 func (c *Core) appendToday(text string) {
+	text = brain.Redact(text)
 	day := time.Now().Format("2006-01-02")
 	existing, _ := c.db.GetDailyContext(c.ctx, day)
 	if existing != "" {
@@ -495,9 +514,9 @@ func (c *Core) ListActivity(limit int) ([]store.Activity, error) {
 	return c.db.ListActivity(c.ctx, limit)
 }
 
-// SetToday sets today's context from the UI.
+// SetToday sets today's context from the UI (with any secrets scrubbed).
 func (c *Core) SetToday(text string) error {
-	return c.db.SetDailyContext(c.ctx, time.Now().Format("2006-01-02"), text)
+	return c.db.SetDailyContext(c.ctx, time.Now().Format("2006-01-02"), brain.Redact(text))
 }
 
 // Today returns today's saved context (empty if none).

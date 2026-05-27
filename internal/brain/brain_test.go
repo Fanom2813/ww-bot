@@ -2,6 +2,7 @@ package brain
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"wwbot/internal/llm"
@@ -10,14 +11,16 @@ import (
 // fakeLLM is a Provider that returns a fixed response and records whether it
 // was called (to assert the LLM is NOT hit when a pre-guardrail trips).
 type fakeLLM struct {
-	resp   string
-	called bool
+	resp    string
+	called  bool
+	lastReq llm.Request
 }
 
 func (f *fakeLLM) Name() string                  { return "fake" }
 func (f *fakeLLM) Available(context.Context) bool { return true }
-func (f *fakeLLM) Complete(context.Context, llm.Request) (string, error) {
+func (f *fakeLLM) Complete(_ context.Context, req llm.Request) (string, error) {
 	f.called = true
+	f.lastReq = req
 	return f.resp, nil
 }
 
@@ -40,14 +43,21 @@ func TestGroupNotOptedInIsSilent(t *testing.T) {
 	}
 }
 
-func TestSensitiveContentNotifiesWithoutLLM(t *testing.T) {
+func TestSensitiveContentRedactedButProcessed(t *testing.T) {
 	b, f := brainWith(`{"action":"reply","text":"sure","confidence":0.9}`)
 	out, _ := b.Decide(context.Background(), Input{Tier: TierAuto, Incoming: "your verification code is 558213"})
-	if out.Action != ActNotify {
-		t.Fatalf("want notify, got %s", out.Action)
+	// The message keeps flowing (the bot may reply)...
+	if out.Action != ActSend {
+		t.Fatalf("want send, got %s", out.Action)
 	}
-	if f.called {
-		t.Fatal("LLM must not see sensitive content")
+	// ...but the secret must never reach the model.
+	if !f.called {
+		t.Fatal("LLM should be called for a redacted message")
+	}
+	for _, m := range f.lastReq.Messages {
+		if strings.Contains(m.Content, "558213") {
+			t.Fatalf("secret leaked to LLM: %q", m.Content)
+		}
 	}
 }
 

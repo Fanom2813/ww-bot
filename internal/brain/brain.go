@@ -101,9 +101,8 @@ func (b *Brain) Decide(ctx context.Context, in Input) (Outcome, error) {
 	if in.IsGroup && !in.GroupOptIn {
 		return Outcome{Action: ActSilent, Reason: "group chat (not opted in)"}, nil
 	}
-	if IsSensitive(in.Incoming) {
-		return Outcome{Action: ActNotify, Reason: "sensitive content (code/credentials) — not sent to AI"}, nil
-	}
+	// Note: secrets are stripped from the text (see ask → Redact), so the message
+	// is processed normally — only the credential itself never reaches the model.
 	if in.Tier == TierNotify {
 		return Outcome{Action: ActNotify, Reason: "contact is notify-only"}, nil
 	}
@@ -163,6 +162,7 @@ func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
 	// rolling memory. in is a value copy, so this never affects callers/storage.
 	in.Incoming = Redact(in.Incoming)
 	in.Summary = Redact(in.Summary)
+	in.DailyContext = Redact(in.DailyContext)
 	if len(in.Window) > 0 {
 		w := make([]Turn, len(in.Window))
 		for i, t := range in.Window {
