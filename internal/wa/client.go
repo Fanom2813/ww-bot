@@ -75,6 +75,10 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		container: container,
 		events:    make(chan Event, 256),
 	}
+	// Retry a failed *initial* connect in the background (e.g. no network at
+	// launch) instead of returning an error. whatsmeow dispatches Disconnected
+	// and keeps retrying, then Connected once the network is back.
+	c.wm.InitialAutoReconnect = true
 	c.wm.AddEventHandler(c.onEvent)
 	return c, nil
 }
@@ -243,7 +247,16 @@ func (c *Client) onEvent(raw any) {
 		c.emit(Connected{JID: c.SelfJID()})
 	case *events.Disconnected:
 		c.emit(Disconnected{})
+	case *events.KeepAliveTimeout:
+		// Pings stopped getting through (silent internet drop): show offline.
+		// whatsmeow keeps the session and reconnects; this is NOT a logout.
+		c.emit(Disconnected{})
+	case *events.KeepAliveRestored:
+		c.emit(Connected{JID: c.SelfJID()})
 	case *events.LoggedOut:
+		// Genuine server-side logout only (401/403/406 or stream error) — never
+		// fired for network loss. Log the reason so it's clear why re-pair is needed.
+		log.Printf("[wa] LOGGED OUT by WhatsApp (onConnect=%v reason=%v) — session invalidated", v.OnConnect, v.Reason)
 		c.emit(LoggedOut{})
 	}
 }

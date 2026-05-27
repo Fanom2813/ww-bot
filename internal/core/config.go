@@ -74,15 +74,15 @@ type Settings struct {
 	GuestTier string `json:"guestTier"`
 }
 
-// DefaultSettings returns sensible free-first defaults. CLI agents are enabled
-// (they only activate if present on PATH) and local Ollama is enabled; hosted
-// providers ship disabled until the user adds a key.
+// DefaultSettings returns sensible free-first defaults. Local Ollama is enabled;
+// CLI agents and hosted providers ship disabled until the user turns them on
+// (CLI agents only actually run if present on PATH).
 func DefaultSettings() Settings {
 	return Settings{
 		Providers: []ProviderSetting{
-			{Kind: "cli", Name: "claude-code", Enabled: true},
-			{Kind: "cli", Name: "codex", Enabled: true},
-			{Kind: "cli", Name: "gemini-cli", Enabled: true},
+			{Kind: "cli", Name: "claude-code", Enabled: false},
+			{Kind: "cli", Name: "codex", Enabled: false},
+			{Kind: "cli", Name: "gemini-cli", Enabled: false},
 			{Kind: "openai", Name: "ollama", BaseURL: "http://localhost:11434/v1", Model: "llama3.2", RequiresKey: false, Enabled: true},
 			{Kind: "openai", Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Model: "meta-llama/llama-3.3-70b-instruct:free", RequiresKey: true, Enabled: false},
 			{Kind: "openai", Name: "groq", BaseURL: "https://api.groq.com/openai/v1", Model: "llama-3.3-70b-versatile", RequiresKey: true, Enabled: false},

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -48,7 +49,12 @@ func (s *WhatsAppService) ServiceStartup(ctx context.Context, _ application.Serv
 
 	if client.IsPaired() {
 		s.core.SetSelfJID(client.SelfJID())
-		return client.Start(ctx)
+		// Don't fail startup if we can't reach WhatsApp (e.g. offline at launch).
+		// whatsmeow retries in the background; we just surface the offline state.
+		if err := client.Start(ctx); err != nil {
+			log.Printf("wa: initial connect failed (will keep retrying): %v", err)
+			emitWA(WAEvent{Type: "disconnected"})
+		}
 	}
 	return nil
 }
