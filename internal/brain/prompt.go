@@ -3,22 +3,20 @@ package brain
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
-// buildSystemPrompt renders the instructions + persona + memory for the model,
-// and pins the strict JSON output contract.
-func buildSystemPrompt(in Input) string {
+// buildSystemPrompt renders the persona (user-editable) + per-contact context +
+// memory, then pins the strict JSON output contract (fixed, not user-editable).
+func buildSystemPrompt(in Input, persona string) string {
 	var b strings.Builder
-	b.WriteString("You are replying to a WhatsApp message ON BEHALF OF the user (the account owner). ")
-	b.WriteString("Write as if you are the user — natural, brief, and in their voice. ")
+	b.WriteString(persona)
 
 	if in.ContactName != "" {
 		fmt.Fprintf(&b, "\n\nYou are talking to: %s.", in.ContactName)
 	}
 	if in.Language != "" {
 		fmt.Fprintf(&b, " Reply in this language: %s.", in.Language)
-	} else {
-		b.WriteString(" Reply in the same language the contact is using.")
 	}
 	if in.Style != "" {
 		fmt.Fprintf(&b, "\nReply style for this contact: %s", in.Style)
@@ -30,34 +28,33 @@ func buildSystemPrompt(in Input) string {
 		fmt.Fprintf(&b, "\n\nThe user's plan today (use it to answer accurately):\n%s", in.DailyContext)
 	}
 
-	b.WriteString("\n\nRules:")
-	b.WriteString("\n- If you don't have enough information to answer accurately, do NOT guess.")
-	b.WriteString("\n- Never make real-world commitments (meetings, money, yes/no to invitations) — those need the user.")
-	b.WriteString("\n- If the message looks like a scam, phishing, or impersonation, flag it.")
-	b.WriteString("\n- It is better to stay silent or escalate than to send wrong information.")
-
-	b.WriteString("\n\nRespond with ONLY a JSON object, no other text, in exactly this shape:")
+	b.WriteString("\n\nDecide the action yourself:")
+	b.WriteString("\n- reply: you're confident and it's safe to send now.")
+	b.WriteString("\n- draft: you have a reply but the owner should review/edit/send it (a decision, a commitment, or you're unsure). Put your best-guess reply in \"text\" (empty if you truly can't answer).")
+	b.WriteString("\n- notify: no reply is appropriate — just flag it for the owner's awareness (scam/heads-up/FYI, or they must act themselves).")
+	b.WriteString("\n- silent: nothing needs a reply or a notification.")
+	b.WriteString("\n\nRespond with ONLY a JSON object, no other text, in exactly this shape.")
+	b.WriteString(" The \"text\" field is the message that will be sent verbatim on WhatsApp, so it must be natural plain text:")
 	b.WriteString(`
 {
-  "action": "reply | escalate | silent",
-  "text": "the reply to send (when action is reply or a suggested draft when escalate)",
+  "action": "reply | draft | notify | silent",
+  "text": "the reply (when action is reply, or a suggested draft when draft)",
   "confidence": 0.0,
   "memory_update": "a short note to remember about this person, or empty",
-  "reason": "short reason when escalating or staying silent",
+  "reason": "short reason when draft/notify/silent",
   "flags": ["scam", "commitment", ...]
 }`)
-	b.WriteString("\n- action=reply: you are confident and it's safe to send.")
-	b.WriteString("\n- action=escalate: you have a draft but the user should review (unsure / sensitive / a decision).")
-	b.WriteString("\n- action=silent: nothing needs a reply.")
 	b.WriteString("\n- confidence is your 0..1 certainty the reply is correct and appropriate.")
 	return b.String()
 }
 
-// buildUserPrompt renders the recent context window and the new burst.
+// buildUserPrompt renders the recent context window (with timing) and the new burst.
 func buildUserPrompt(in Input) string {
+	const tsFmt = "2006-01-02 3:04 PM"
 	var b strings.Builder
+	fmt.Fprintf(&b, "Right now it is %s.\n\n", time.Now().Format(tsFmt))
 	if len(in.Window) > 0 {
-		b.WriteString("Recent conversation:\n")
+		b.WriteString("Recent conversation (oldest first):\n")
 		for _, t := range in.Window {
 			who := t.Name
 			if t.FromMe {
@@ -68,11 +65,15 @@ func buildUserPrompt(in Input) string {
 			if who == "" {
 				who = "Them"
 			}
-			fmt.Fprintf(&b, "%s: %s\n", who, t.Text)
+			when := ""
+			if !t.At.IsZero() {
+				when = " [" + t.At.Format(tsFmt) + "]"
+			}
+			fmt.Fprintf(&b, "%s%s: %s\n", who, when, t.Text)
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("New message(s) to respond to:\n")
+	b.WriteString("New message(s) to respond to (just now):\n")
 	b.WriteString(in.Incoming)
 	return b.String()
 }

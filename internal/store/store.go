@@ -1,7 +1,8 @@
 // Package store is the app's local persistence layer (SQLite via mattn).
-// It holds DERIVED data only — contact profiles + rolling summaries, settings,
-// the approvals/draft queue, an activity log, and daily context. Raw chat
-// messages are NEVER persisted here (see the privacy model in PLAN.md).
+// It holds contact profiles + rolling summaries, settings, the approvals/draft
+// queue, an activity log, daily context, and a small rolling per-chat message
+// history (capped, and already credential-redacted at the gate) so the bot keeps
+// conversational context across restarts.
 package store
 
 import (
@@ -87,6 +88,18 @@ CREATE TABLE IF NOT EXISTS daily_context (
 	day  TEXT PRIMARY KEY, -- YYYY-MM-DD
 	text TEXT NOT NULL DEFAULT ''
 );
+
+-- Rolling per-chat conversation history (already credential-redacted at the
+-- gate). Pruned to the most recent N per chat so it can't grow unbounded.
+CREATE TABLE IF NOT EXISTS messages (
+	id       INTEGER PRIMARY KEY AUTOINCREMENT,
+	chat_jid TEXT NOT NULL,
+	from_me  INTEGER NOT NULL DEFAULT 0,
+	name     TEXT NOT NULL DEFAULT '',
+	text     TEXT NOT NULL DEFAULT '',
+	ts       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid, id);
 `
 	if _, err := d.sql.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
@@ -406,4 +419,81 @@ func (d *DB) GetDailyContext(ctx context.Context, day string) (string, error) {
 		return "", fmt.Errorf("store: get daily context: %w", err)
 	}
 	return text, nil
+}
+
+// ---------------------------------------------------------------------------
+// Messages (rolling per-chat history)
+// ---------------------------------------------------------------------------
+
+// Message is one turn of stored conversation history.
+type Message struct {
+	ChatJID   string    `json:"chatJid"`
+	FromMe    bool      `json:"fromMe"`
+	Name      string    `json:"name"`
+	Text      string    `json:"text"`
+	Timestamp time.Time `json:"ts"`
+}
+
+// AddMessage appends a message to a chat's history and prunes the chat to the
+// most recent keep messages. Text must already be credential-redacted.
+func (d *DB) AddMessage(ctx context.Context, m Message, keep int) error {
+	if keep <= 0 {
+		keep = 30
+	}
+	ts := m.Timestamp
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	fromMe := 0
+	if m.FromMe {
+		fromMe = 1
+	}
+	if _, err := d.sql.ExecContext(ctx,
+		`INSERT INTO messages (chat_jid, from_me, name, text, ts) VALUES (?, ?, ?, ?, ?)`,
+		m.ChatJID, fromMe, m.Name, m.Text, ts.Unix()); err != nil {
+		return fmt.Errorf("store: add message: %w", err)
+	}
+	// Keep only the newest `keep` rows for this chat.
+	if _, err := d.sql.ExecContext(ctx,
+		`DELETE FROM messages WHERE chat_jid=? AND id NOT IN (
+			SELECT id FROM messages WHERE chat_jid=? ORDER BY id DESC LIMIT ?
+		)`, m.ChatJID, m.ChatJID, keep); err != nil {
+		return fmt.Errorf("store: prune messages: %w", err)
+	}
+	return nil
+}
+
+// RecentMessages returns up to limit recent messages for a chat, oldest first.
+func (d *DB) RecentMessages(ctx context.Context, chatJID string, limit int) ([]Message, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT from_me, name, text, ts FROM messages WHERE chat_jid=? ORDER BY id DESC LIMIT ?`,
+		chatJID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: recent messages: %w", err)
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		var m Message
+		var fromMe int
+		var ts int64
+		if err := rows.Scan(&fromMe, &m.Name, &m.Text, &ts); err != nil {
+			return nil, err
+		}
+		m.ChatJID = chatJID
+		m.FromMe = fromMe != 0
+		m.Timestamp = time.Unix(ts, 0)
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Reverse to oldest-first.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
 }

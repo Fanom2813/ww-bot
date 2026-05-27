@@ -74,6 +74,7 @@ type Core struct {
 
 	onUnknown       UnknownNotifier
 	pendingUnknown  map[string]PendingContact // unsaved numbers awaiting a save/ignore decision
+	msgKey          []byte                    // AES key for encrypting stored message history
 
 	send    SendFunc
 	selfJID string
@@ -92,6 +93,7 @@ func New(ctx context.Context, db *store.DB, notify Notifier) (*Core, error) {
 	c := &Core{
 		db: db, notify: notify, scheduler: schedule.New(), settings: s, ctx: ctx,
 		pendingUnknown: make(map[string]PendingContact),
+		msgKey:         loadOrCreateMsgKey(),
 	}
 	c.build(s)
 	return c, nil
@@ -104,7 +106,7 @@ func (c *Core) OnUnknownContact(fn UnknownNotifier) { c.onUnknown = fn }
 // build (re)constructs the LLM registry, transcriber, brain, gate, and inbox
 // from settings. The gate uses a thunk so the sender can be attached later.
 func (c *Core) build(s Settings) {
-	reg := buildRegistry(s.Providers)
+	reg := buildRegistry(hydrateKeys(s.Providers))
 	c.brn = brain.New(reg, brainConfig(s))
 	c.stt = buildSTT(s.STT)
 
@@ -117,15 +119,20 @@ func (c *Core) build(s Settings) {
 		},
 		safety.Options{
 			OnSent: func(to, text string) {
+				log.Printf("[core] SENT → %q: %q", to, preview(text))
+				// Persist our own reply to history so the bot remembers what it
+				// already said across restarts (WhatsApp won't echo it to us).
+				c.storeMessage(to, "", text, true)
 				_ = c.db.LogActivity(c.ctx, "sent", to, preview(text))
 			},
 			OnDrop: func(j safety.Job, reason string) {
+				log.Printf("[core] send suppressed → %q: %s", j.ToJID, reason)
 				_ = c.db.LogActivity(c.ctx, "system", j.ToJID, "send suppressed: "+reason)
 			},
 		})
 
 	c.debounce = inbox.New(inbox.Config{
-		Quiet: 30 * time.Second, MaxWait: 3 * time.Minute, WindowSize: 10,
+		Quiet: 30 * time.Second, MaxWait: 3 * time.Minute,
 	}, c.handleBatch)
 }
 
@@ -210,6 +217,16 @@ func (c *Core) OnInbound(in Inbound) {
 		text = clean
 	}
 
+	// Persist to the rolling (encrypted) history so context survives restarts —
+	// for 1-1 chats, including the owner's own manual replies (for takeover context).
+	if !in.IsGroup && in.ChatJID != "" {
+		name := in.PushName
+		if in.IsFromMe {
+			name = ""
+		}
+		c.storeMessage(in.ChatJID, name, text, in.IsFromMe)
+	}
+
 	// Surface unknown 1-1 senders immediately (don't wait for the reply debounce)
 	// so the "save this contact?" action shows up the moment they message.
 	if !in.IsFromMe && !in.IsGroup && in.ChatJID != "" {
@@ -239,6 +256,31 @@ func (c *Core) transcribe(in Inbound) string {
 	return res.Text
 }
 
+// historyLimit caps how many recent messages we keep/load per chat, bounding
+// both storage and how much context goes to the model.
+const historyLimit = 30
+
+// storeMessage appends a message to the chat's rolling, encrypted history.
+func (c *Core) storeMessage(chatJID, name, text string, fromMe bool) {
+	if chatJID == "" {
+		return
+	}
+	_ = c.db.AddMessage(c.ctx, store.Message{
+		ChatJID: chatJID, FromMe: fromMe, Name: name,
+		Text: encryptText(c.msgKey, text), Timestamp: time.Now(),
+	}, historyLimit)
+}
+
+// recentTurns loads and decrypts the recent conversation for a chat as context.
+func (c *Core) recentTurns(chatJID string) []brain.Turn {
+	msgs, _ := c.db.RecentMessages(c.ctx, chatJID, historyLimit)
+	turns := make([]brain.Turn, 0, len(msgs))
+	for _, m := range msgs {
+		turns = append(turns, brain.Turn{FromMe: m.FromMe, Name: m.Name, Text: decryptText(c.msgKey, m.Text), At: m.Timestamp})
+	}
+	return turns
+}
+
 // handleBatch runs the brain on a coalesced batch and routes the outcome.
 func (c *Core) handleBatch(b inbox.Batch) {
 	ctx := c.ctx
@@ -249,6 +291,9 @@ func (c *Core) handleBatch(b inbox.Batch) {
 	guestMode := c.settings.GuestMode
 	guestTier := c.settings.GuestTier
 	c.mu.RUnlock()
+
+	log.Printf("[core] handleBatch chat=%q msgs=%d unknown=%v group=%v guestMode=%v",
+		b.ChatJID, len(b.Messages), unknown, isGroup(b), guestMode)
 
 	if unknown && !isGroup(b) {
 		// The save prompt was already queued in OnInbound; this is a safety net.
@@ -264,8 +309,10 @@ func (c *Core) handleBatch(b inbox.Batch) {
 		incoming, _ := summarizeBurst(b, "")
 		c.flagUnknown(b.ChatJID, name, incoming)
 		if !guestMode {
+			log.Printf("[core] chat=%q unknown sender + guest mode OFF → no reply (save prompt only)", b.ChatJID)
 			return
 		}
+		log.Printf("[core] chat=%q unknown sender, guest mode ON → replying at tier=%s", b.ChatJID, guestTier)
 	}
 
 	tier := contact.Tier
@@ -290,7 +337,7 @@ func (c *Core) handleBatch(b inbox.Batch) {
 		GroupOptIn:   false, // group opt-in not yet exposed; default off
 		Tier:         brain.Tier(tier),
 		Incoming:     incoming,
-		Window:       toTurns(b.Window),
+		Window:       c.recentTurns(b.ChatJID),
 		ContactName:  contact.Name,
 		Language:     contact.Language,
 		Style:        contact.Style,
@@ -298,11 +345,14 @@ func (c *Core) handleBatch(b inbox.Batch) {
 		DailyContext: daily,
 	}
 
+	log.Printf("[core] deciding chat=%q tier=%s incoming=%q", b.ChatJID, tier, preview(incoming))
 	out, err := c.brn.Decide(ctx, in)
 	if err != nil {
+		log.Printf("[core] brain error chat=%q: %v (no provider enabled?)", b.ChatJID, err)
 		c.notify("error", "AI error", err.Error())
 		return
 	}
+	log.Printf("[core] decision chat=%q action=%s confidence=%.2f reason=%q", b.ChatJID, out.Action, out.Confidence, out.Reason)
 
 	if out.MemoryUpdate != "" {
 		_ = c.db.UpdateSummary(ctx, b.ChatJID, mergeSummary(contact.Summary, out.MemoryUpdate))
@@ -312,7 +362,10 @@ func (c *Core) handleBatch(b inbox.Batch) {
 	case brain.ActSend:
 		if err := c.gate.Enqueue(safety.Job{ToJID: b.ChatJID, Text: out.Text}); err != nil {
 			// Paused/full — keep the reply as a draft so it isn't lost.
+			log.Printf("[core] send blocked chat=%q: %v → queued as draft", b.ChatJID, err)
 			c.queueDraft(b.ChatJID, in.SenderName, incoming, out.Text, "send blocked: "+err.Error(), out.Confidence)
+		} else {
+			log.Printf("[core] reply queued for paced send → chat=%q", b.ChatJID)
 		}
 	case brain.ActDraft:
 		c.queueDraft(b.ChatJID, in.SenderName, incoming, out.Text, out.Reason, out.Confidence)
@@ -489,6 +542,9 @@ func (c *Core) ApproveDraft(id int64, edited string) error {
 	if strings.TrimSpace(edited) != "" {
 		text = edited
 	}
+	if strings.TrimSpace(text) == "" {
+		return errors.New("core: cannot send an empty reply — type a message first")
+	}
 	// User explicitly approved -> bypass quiet hours.
 	if err := c.gate.Enqueue(safety.Job{ToJID: dr.ChatJID, Text: text, BypassQuiet: true}); err != nil {
 		return err
@@ -519,21 +575,58 @@ func (c *Core) SetToday(text string) error {
 	return c.db.SetDailyContext(c.ctx, time.Now().Format("2006-01-02"), brain.Redact(text))
 }
 
+// DefaultSystemPrompt returns the built-in persona used when none is set, so the
+// UI can show/restore it.
+func (c *Core) DefaultSystemPrompt() string { return brain.DefaultPersona }
+
 // Today returns today's saved context (empty if none).
 func (c *Core) Today() string {
 	txt, _ := c.db.GetDailyContext(c.ctx, time.Now().Format("2006-01-02"))
 	return txt
 }
 
-// GetSettings returns the current settings.
+// GetSettings returns the current settings for the UI. API keys are never
+// included — instead each provider's HasKey reports whether a key exists in the
+// OS keychain.
 func (c *Core) GetSettings() Settings {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.settings
+	s := c.settings
+	c.mu.RUnlock()
+	ps := make([]ProviderSetting, len(s.Providers))
+	for i, p := range s.Providers {
+		p.APIKey = ""
+		p.HasKey = p.RequiresKey && hasKey(p.Name)
+		ps[i] = p
+	}
+	s.Providers = ps
+	return s
 }
 
-// SaveSettings persists settings and rebuilds the affected components.
+// SaveSettings persists settings and rebuilds the affected components. API keys
+// are written to the OS keychain (keyed by provider name) and stripped from the
+// blob saved to the settings DB.
 func (c *Core) SaveSettings(s Settings) error {
+	c.mu.RLock()
+	old := c.settings.Providers
+	c.mu.RUnlock()
+
+	newNames := make(map[string]bool, len(s.Providers))
+	for i := range s.Providers {
+		p := &s.Providers[i]
+		newNames[p.Name] = true
+		if p.APIKey != "" {
+			storeKey(p.Name, p.APIKey) // new/replacement key → keychain
+		}
+		p.APIKey = "" // never persist the key in the settings DB
+		p.HasKey = false
+	}
+	// Forget keychain entries for providers the user removed.
+	for _, p := range old {
+		if p.RequiresKey && !newNames[p.Name] {
+			deleteKey(p.Name)
+		}
+	}
+
 	if err := saveSettings(c.ctx, c.db, s); err != nil {
 		return err
 	}
@@ -541,7 +634,7 @@ func (c *Core) SaveSettings(s Settings) error {
 	c.settings = s
 	c.mu.Unlock()
 	// Rebuild registry/stt/brain; the running gate keeps its config until restart.
-	reg := buildRegistry(s.Providers)
+	reg := buildRegistry(hydrateKeys(s.Providers))
 	c.mu.Lock()
 	c.brn = brain.New(reg, brainConfig(s))
 	c.stt = buildSTT(s.STT)

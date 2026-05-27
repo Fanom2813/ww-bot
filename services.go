@@ -38,6 +38,10 @@ func (s *SettingsService) ServiceName() string         { return "Settings" }
 func (s *SettingsService) Get() core.Settings          { return s.core.GetSettings() }
 func (s *SettingsService) Save(st core.Settings) error { return s.core.SaveSettings(st) }
 
+// DefaultSystemPrompt returns the built-in persona, for the Settings UI to show
+// or restore.
+func (s *SettingsService) DefaultSystemPrompt() string { return s.core.DefaultSystemPrompt() }
+
 // ActivityService exposes the audit log.
 type ActivityService struct{ core *core.Core }
 

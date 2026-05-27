@@ -149,3 +149,49 @@ func TestActivityAndDailyContext(t *testing.T) {
 		t.Fatalf("want empty for missing day, got %q", txt)
 	}
 }
+
+func TestMessagesRollingHistory(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	// Interleave the contact and the bot/owner, more than the cap.
+	for i := 0; i < 6; i++ {
+		if err := db.AddMessage(ctx, Message{ChatJID: "1@s", Name: "Dad", Text: "them-" + itoa(i)}, 4); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.AddMessage(ctx, Message{ChatJID: "1@s", FromMe: true, Text: "me-" + itoa(i)}, 4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A different chat must stay independent.
+	if err := db.AddMessage(ctx, Message{ChatJID: "2@s", Text: "other"}, 4); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, err := db.RecentMessages(ctx, "1@s", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Capped at keep=4.
+	if len(msgs) != 4 {
+		t.Fatalf("want 4 (capped), got %d", len(msgs))
+	}
+	// Oldest-first ordering: the last 4 inserted were them-5, me-5 ... wait order:
+	// inserts ...them-4, me-4, them-5, me-5 → newest 4 = them-4, me-4, them-5, me-5.
+	want := []string{"them-4", "me-4", "them-5", "me-5"}
+	for i, m := range msgs {
+		if m.Text != want[i] {
+			t.Fatalf("pos %d: want %q, got %q", i, want[i], m.Text)
+		}
+	}
+	// fromMe preserved.
+	if msgs[0].FromMe || !msgs[1].FromMe {
+		t.Fatalf("fromMe flags wrong: %+v", msgs)
+	}
+	// Independent chat untouched.
+	if other, _ := db.RecentMessages(ctx, "2@s", 10); len(other) != 1 || other[0].Text != "other" {
+		t.Fatalf("chat 2 isolation broken: %+v", other)
+	}
+}
+
+func itoa(i int) string { return string(rune('0' + i)) }

@@ -1,9 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Page } from "@/components/Page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import {
   Field,
   FieldContent,
@@ -20,7 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Settings as SettingsModel, SettingsService } from "@/lib/api";
+import { ProviderDialog } from "@/components/dialogs";
+import { ProviderSetting, Settings as SettingsModel, SettingsService } from "@/lib/api";
 
 /** Section is one settings group: a title + subtitle, then its individual fields. */
 function Section({
@@ -46,11 +50,16 @@ function Section({
 export function Settings() {
   const [s, setS] = useState<SettingsModel | null>(null);
   const [saving, setSaving] = useState(false);
+  const [providerDialog, setProviderDialog] = useState<ProviderSetting | null>(null);
+  const [defaultPrompt, setDefaultPrompt] = useState("");
 
-  useEffect(() => {
+  const load = () =>
     SettingsService.Get()
       .then(setS)
       .catch((e) => toast.error("Couldn't load settings", { description: String(e) }));
+  useEffect(() => {
+    load();
+    SettingsService.DefaultSystemPrompt().then(setDefaultPrompt).catch(() => {});
   }, []);
 
   if (!s) {
@@ -59,18 +68,68 @@ export function Settings() {
 
   const set = (patch: Partial<SettingsModel>) => setS({ ...s, ...patch } as SettingsModel);
 
-  const updateProvider = (i: number, patch: Record<string, unknown>) => {
-    const ps = [...s.providers];
-    ps[i] = { ...ps[i], ...patch } as (typeof ps)[number];
-    set({ providers: ps });
+  // persist saves the whole settings (incl. any provider/key changes) and reloads
+  // so HasKey/cleared keys reflect the keychain.
+  const persist = (next: SettingsModel, msg = "Settings saved") => {
+    setS(next);
+    SettingsService.Save(next)
+      .then(() => {
+        toast.success(msg);
+        load();
+      })
+      .catch((e) => toast.error("Save failed", { description: String(e) }));
   };
+
   const save = () => {
     setSaving(true);
     SettingsService.Save(s)
-      .then(() => toast.success("Settings saved"))
+      .then(() => {
+        toast.success("Settings saved");
+        load();
+      })
       .catch((e) => toast.error("Save failed", { description: String(e) }))
       .finally(() => setSaving(false));
   };
+
+  const toggleProvider = (name: string, enabled: boolean) =>
+    persist(
+      new SettingsModel({
+        ...s,
+        providers: s.providers.map((x) =>
+          x.name === name ? new ProviderSetting({ ...x, enabled }) : x,
+        ),
+      } as SettingsModel),
+    );
+
+  const saveProvider = (p: ProviderSetting) => {
+    const exists = s.providers.some((x) => x.name === p.name);
+    const providers = exists
+      ? s.providers.map((x) => (x.name === p.name ? p : x))
+      : [...s.providers, new ProviderSetting({ ...p, enabled: true } as ProviderSetting)];
+    setProviderDialog(null);
+    persist(new SettingsModel({ ...s, providers } as SettingsModel), "Provider saved");
+  };
+
+  const removeProvider = (name: string) =>
+    persist(
+      new SettingsModel({
+        ...s,
+        providers: s.providers.filter((x) => x.name !== name),
+      } as SettingsModel),
+      "Provider removed",
+    );
+
+  // Built-in CLI agents (auto-discovered, no command set) vs user-added providers
+  // (hosted APIs and custom CLIs).
+  const cli = s.providers.filter((p) => p.kind === "cli" && !p.bin);
+  const added = s.providers.filter((p) => p.kind !== "cli" || !!p.bin);
+
+  const typeLabel = (p: ProviderSetting) =>
+    p.kind === "anthropic" ? "Anthropic" : p.kind === "cli" ? "CLI" : "OpenAI";
+  const subLabel = (p: ProviderSetting) =>
+    p.kind === "cli"
+      ? [p.bin, ...(p.args ?? [])].join(" ")
+      : `${p.model}${p.kind !== "anthropic" && p.baseUrl ? ` · ${p.baseUrl}` : ""}`;
 
   const num = (v: string) => parseInt(v || "0", 10) || 0;
 
@@ -123,46 +182,107 @@ export function Settings() {
           )}
         </Section>
 
+        {/* System prompt / persona */}
+        <Section
+          title="System prompt (persona)"
+          description="How the bot writes replies — its voice, tone, and rules. Per-contact style still applies on top. Leave blank to use the built-in default; the JSON output format is fixed and unaffected by this."
+        >
+          <Field>
+            <Textarea
+              rows={10}
+              className="font-mono text-xs"
+              placeholder={defaultPrompt || "Leave blank to use the built-in default…"}
+              value={s.systemPrompt}
+              onChange={(e) => set({ systemPrompt: e.target.value })}
+            />
+            <FieldDescription>
+              {s.systemPrompt
+                ? "Using your custom prompt."
+                : "Blank — using the built-in default (shown above as placeholder)."}
+            </FieldDescription>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => set({ systemPrompt: defaultPrompt })}
+                disabled={!defaultPrompt}
+              >
+                Load default to edit
+              </Button>
+              {s.systemPrompt && (
+                <Button variant="ghost" size="sm" onClick={() => set({ systemPrompt: "" })}>
+                  Reset to default
+                </Button>
+              )}
+            </div>
+          </Field>
+        </Section>
+
         {/* AI backends */}
         <Section
           title="AI backends"
-          description="Tried top-to-bottom; first available answers. CLI agents use your own subscription (no key) and only activate if installed."
+          description="Tried top-to-bottom; first available answers. CLI agents use your own subscription (no key). Add hosted providers (OpenAI-compatible or Anthropic) with the button below."
         >
-          {s.providers.map((p, i) => (
-            <div key={`${p.name}-${i}`} className="space-y-3">
-              <Field orientation="horizontal">
-                <FieldContent>
-                  <FieldLabel>
-                    {p.name} <span className="text-muted-foreground">({p.kind})</span>
-                  </FieldLabel>
-                </FieldContent>
-                <Switch
-                  checked={p.enabled}
-                  onCheckedChange={(v) => updateProvider(i, { enabled: v })}
-                />
-              </Field>
-              {p.kind === "openai" && (
-                <div className="grid grid-cols-1 gap-3 pl-1 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel>Model</FieldLabel>
-                    <Input
-                      value={p.model ?? ""}
-                      onChange={(e) => updateProvider(i, { model: e.target.value })}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel>API key {p.requiresKey ? "" : "(optional)"}</FieldLabel>
-                    <Input
-                      type="password"
-                      placeholder={p.requiresKey ? "required" : "not needed"}
-                      value={p.apiKey ?? ""}
-                      onChange={(e) => updateProvider(i, { apiKey: e.target.value })}
-                    />
-                  </Field>
-                </div>
-              )}
-            </div>
+          {cli.map((p) => (
+            <Field key={p.name} orientation="horizontal">
+              <FieldContent>
+                <FieldLabel>
+                  {p.name} <span className="text-muted-foreground">(CLI)</span>
+                </FieldLabel>
+                <FieldDescription>Uses your local agent; only runs if installed.</FieldDescription>
+              </FieldContent>
+              <Switch checked={p.enabled} onCheckedChange={(v) => toggleProvider(p.name, v)} />
+            </Field>
           ))}
+
+          {added.map((p) => (
+            <Field key={p.name} orientation="horizontal">
+              <FieldContent>
+                <FieldLabel className="flex items-center gap-2">
+                  {p.name}
+                  <span className="text-muted-foreground">({typeLabel(p)})</span>
+                  {p.hasKey && (
+                    <Badge variant="secondary" className="text-[10px]">
+                      key set
+                    </Badge>
+                  )}
+                </FieldLabel>
+                <FieldDescription className="truncate">{subLabel(p)}</FieldDescription>
+              </FieldContent>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => setProviderDialog(new ProviderSetting({ ...p } as ProviderSetting))}
+              >
+                <Pencil className="size-4" />
+              </Button>
+              <Button size="icon-sm" variant="ghost" onClick={() => removeProvider(p.name)}>
+                <Trash2 className="size-4" />
+              </Button>
+              <Switch checked={p.enabled} onCheckedChange={(v) => toggleProvider(p.name, v)} />
+            </Field>
+          ))}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setProviderDialog(
+                  new ProviderSetting({ kind: "openai", requiresKey: true } as ProviderSetting),
+                )
+              }
+            >
+              <Plus className="size-4" /> Add provider
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setProviderDialog(new ProviderSetting({ kind: "cli" } as ProviderSetting))}
+            >
+              <Plus className="size-4" /> Add custom CLI
+            </Button>
+          </div>
         </Section>
 
         {/* Voice */}
@@ -210,11 +330,39 @@ export function Settings() {
             <NumberField label="Per minute" value={s.safety.perMinute} onChange={(v) => set({ safety: { ...s.safety, perMinute: v } })} />
             <NumberField label="Per day" value={s.safety.perDay} onChange={(v) => set({ safety: { ...s.safety, perDay: v } })} />
             <NumberField label="Cooldown (s)" value={s.safety.perContactCooldownSec} onChange={(v) => set({ safety: { ...s.safety, perContactCooldownSec: v } })} />
-            <NumberField label="Quiet start (h)" value={s.safety.quietStart} onChange={(v) => set({ safety: { ...s.safety, quietStart: v } })} />
-            <NumberField label="Quiet end (h)" value={s.safety.quietEnd} onChange={(v) => set({ safety: { ...s.safety, quietEnd: v } })} />
           </div>
         </Section>
+
+        {/* Quiet hours */}
+        <Section
+          title="Quiet hours"
+          description="Pause outgoing replies during these hours so the bot never texts at odd times (proactive greetings can bypass). Hours are 0–23; e.g. 23 to 7 means 11pm–7am."
+        >
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="quiet">Enable quiet hours</FieldLabel>
+              <FieldDescription>When off, the bot may send at any time of day.</FieldDescription>
+            </FieldContent>
+            <Switch
+              id="quiet"
+              checked={!s.safety.quietHoursOff}
+              onCheckedChange={(v) => set({ safety: { ...s.safety, quietHoursOff: !v } })}
+            />
+          </Field>
+          {!s.safety.quietHoursOff && (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <NumberField label="Quiet start (h)" value={s.safety.quietStart} onChange={(v) => set({ safety: { ...s.safety, quietStart: v } })} />
+              <NumberField label="Quiet end (h)" value={s.safety.quietEnd} onChange={(v) => set({ safety: { ...s.safety, quietEnd: v } })} />
+            </div>
+          )}
+        </Section>
       </div>
+
+      <ProviderDialog
+        provider={providerDialog}
+        onClose={() => setProviderDialog(null)}
+        onSave={saveProvider}
+      />
     </Page>
   );
 

@@ -3,8 +3,12 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log"
 	"strings"
 	"time"
+
+	"github.com/zalando/go-keyring"
 
 	"wwbot/internal/brain"
 	"wwbot/internal/llm"
@@ -18,14 +22,22 @@ const settingsKey = "config"
 
 // ProviderSetting describes one LLM backend in the user-ordered list.
 type ProviderSetting struct {
-	Kind        string `json:"kind"` // "openai" | "cli"
+	Kind        string `json:"kind"` // "openai" | "anthropic" | "cli"
 	Name        string `json:"name"`
 	BaseURL     string `json:"baseUrl,omitempty"`
 	APIKey      string `json:"apiKey,omitempty"`
 	Model       string `json:"model,omitempty"`
 	RequiresKey bool   `json:"requiresKey,omitempty"`
-	Bin         string `json:"bin,omitempty"` // for custom cli kind
-	Enabled     bool   `json:"enabled"`
+	Bin         string `json:"bin,omitempty"` // custom CLI command, e.g. "claude"
+	// Args are the flags for a custom CLI, e.g. ["--model","sonnet","-p"].
+	Args []string `json:"args,omitempty"`
+	// AppendPrompt: false → pipe the prompt to the CLI's stdin (e.g. claude -p);
+	// true → append it as the final argument (e.g. gemini -p <prompt>).
+	AppendPrompt bool `json:"appendPrompt,omitempty"`
+	Enabled      bool `json:"enabled"`
+	// HasKey is set on read to tell the UI a key exists in the keychain (the key
+	// itself is never sent to the frontend or persisted in the settings DB).
+	HasKey bool `json:"hasKey,omitempty"`
 }
 
 // STTSetting configures voice transcription.
@@ -46,6 +58,9 @@ type SafetySetting struct {
 	PerContactCooldownSec int `json:"perContactCooldownSec"`
 	QuietStart            int `json:"quietStart"`
 	QuietEnd              int `json:"quietEnd"`
+	// QuietHoursOff disables quiet hours entirely. Inverted so existing settings
+	// (field absent → false) keep quiet hours enabled.
+	QuietHoursOff bool `json:"quietHoursOff,omitempty"`
 }
 
 // GreetingSetting is a scheduled proactive message.
@@ -72,20 +87,20 @@ type Settings struct {
 	// GuestTier is how the bot handles those non-whitelisted senders while
 	// GuestMode is on: "auto" (reply), "draft" (queue for approval), or "notify".
 	GuestTier string `json:"guestTier"`
+	// SystemPrompt is the user-editable persona/system prompt. Empty means use
+	// the built-in default (brain.DefaultPersona).
+	SystemPrompt string `json:"systemPrompt"`
 }
 
-// DefaultSettings returns sensible free-first defaults. Local Ollama is enabled;
-// CLI agents and hosted providers ship disabled until the user turns them on
-// (CLI agents only actually run if present on PATH).
+// DefaultSettings returns sensible defaults. Only the auto-discovered CLI agents
+// are listed (disabled until the user turns one on). Hosted OpenAI-compatible and
+// Anthropic providers are added by the user via the Settings dialog.
 func DefaultSettings() Settings {
 	return Settings{
 		Providers: []ProviderSetting{
 			{Kind: "cli", Name: "claude-code", Enabled: false},
 			{Kind: "cli", Name: "codex", Enabled: false},
 			{Kind: "cli", Name: "gemini-cli", Enabled: false},
-			{Kind: "openai", Name: "ollama", BaseURL: "http://localhost:11434/v1", Model: "llama3.2", RequiresKey: false, Enabled: true},
-			{Kind: "openai", Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Model: "meta-llama/llama-3.3-70b-instruct:free", RequiresKey: true, Enabled: false},
-			{Kind: "openai", Name: "groq", BaseURL: "https://api.groq.com/openai/v1", Model: "llama-3.3-70b-versatile", RequiresKey: true, Enabled: false},
 		},
 		STT: STTSetting{
 			BaseURL: "https://api.groq.com/openai/v1",
@@ -130,6 +145,38 @@ func saveSettings(ctx context.Context, db *store.DB, s Settings) error {
 	return db.SetSetting(ctx, settingsKey, string(b))
 }
 
+// keyringService namespaces this app's secrets in the OS keychain.
+const keyringService = "ww-bot"
+
+func storeKey(name, key string) {
+	if err := keyring.Set(keyringService, name, key); err != nil {
+		log.Printf("[core] keychain SET failed for %q: %v (key not saved)", name, err)
+	}
+}
+func loadKey(name string) string {
+	v, err := keyring.Get(keyringService, name)
+	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		log.Printf("[core] keychain GET failed for %q: %v", name, err)
+	}
+	return v
+}
+func deleteKey(name string) { _ = keyring.Delete(keyringService, name) }
+func hasKey(name string) bool { return loadKey(name) != "" }
+
+// hydrateKeys returns a copy of the providers with API keys pulled from the OS
+// keychain. Keys are only ever materialized here (to build the registry) — they
+// are never stored in the settings DB or returned to the UI.
+func hydrateKeys(ps []ProviderSetting) []ProviderSetting {
+	out := make([]ProviderSetting, len(ps))
+	for i, p := range ps {
+		if p.RequiresKey && p.APIKey == "" {
+			p.APIKey = loadKey(p.Name)
+		}
+		out[i] = p
+	}
+	return out
+}
+
 // buildRegistry constructs the LLM registry from the ordered provider list.
 func buildRegistry(ps []ProviderSetting) *llm.Registry {
 	var provs []llm.Provider
@@ -139,10 +186,22 @@ func buildRegistry(ps []ProviderSetting) *llm.Registry {
 		}
 		switch p.Kind {
 		case "openai":
+			log.Printf("[core] provider %q (openai) enabled: model=%q hasKey=%v requiresKey=%v", p.Name, p.Model, p.APIKey != "", p.RequiresKey)
 			provs = append(provs, llm.NewOpenAICompatible(llm.OpenAIConfig{
 				Name: p.Name, BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.Model, RequiresKey: p.RequiresKey,
 			}))
+		case "anthropic":
+			log.Printf("[core] provider %q (anthropic) enabled: model=%q hasKey=%v", p.Name, p.Model, p.APIKey != "")
+			provs = append(provs, llm.NewAnthropic(llm.AnthropicConfig{
+				Name: p.Name, APIKey: p.APIKey, Model: p.Model, BaseURL: p.BaseURL,
+			}))
 		case "cli":
+			// A custom CLI (any command that accepts a prompt) is fully described
+			// by its binary + args; the prompt goes to stdin unless AppendPrompt.
+			if p.Bin != "" {
+				provs = append(provs, llm.NewCLIAgent(p.Name, p.Bin, p.Args, !p.AppendPrompt))
+				break
+			}
 			switch strings.ToLower(p.Name) {
 			case "claude-code", "claude":
 				provs = append(provs, llm.ClaudeCLI())
@@ -150,10 +209,6 @@ func buildRegistry(ps []ProviderSetting) *llm.Registry {
 				provs = append(provs, llm.CodexCLI())
 			case "gemini-cli", "gemini":
 				provs = append(provs, llm.GeminiCLI())
-			default:
-				if p.Bin != "" {
-					provs = append(provs, llm.NewCLIAgent(p.Name, p.Bin, nil, true))
-				}
 			}
 		}
 	}
@@ -172,17 +227,21 @@ func buildSTT(s STTSetting) stt.Transcriber {
 
 // buildSafetyConfig maps the user's safety settings to the gate config.
 func buildSafetyConfig(s SafetySetting) safety.Config {
+	qStart, qEnd := s.QuietStart, s.QuietEnd
+	if s.QuietHoursOff {
+		qStart, qEnd = 0, 0 // start==end disables quiet hours in the gate
+	}
 	return safety.Config{
 		MinDelay:           time.Duration(s.MinDelaySec) * time.Second,
 		MaxDelay:           time.Duration(s.MaxDelaySec) * time.Second,
 		PerMinute:          s.PerMinute,
 		PerDay:             s.PerDay,
 		PerContactCooldown: time.Duration(s.PerContactCooldownSec) * time.Second,
-		QuietStart:         s.QuietStart,
-		QuietEnd:           s.QuietEnd,
+		QuietStart:         qStart,
+		QuietEnd:           qEnd,
 	}
 }
 
 func brainConfig(s Settings) brain.Config {
-	return brain.Config{MinConfidence: s.MinConfidence}
+	return brain.Config{MinConfidence: s.MinConfidence, Persona: s.SystemPrompt}
 }

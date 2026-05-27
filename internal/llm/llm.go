@@ -35,6 +35,9 @@ type Request struct {
 	Messages    []Message // conversation turns
 	Temperature float64   // 0 = deterministic-ish
 	MaxTokens   int       // 0 = provider default
+	// JSON asks the provider to constrain output to a JSON object (OpenAI
+	// json_object mode). Providers that don't support it ignore the hint.
+	JSON bool
 }
 
 // Provider is a single LLM backend.
@@ -50,6 +53,14 @@ type Provider interface {
 
 // ErrNoProvider is returned when no configured provider is available.
 var ErrNoProvider = errors.New("llm: no available provider")
+
+// truncate shortens s to at most n characters (used in error messages).
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
 
 // Registry holds providers in preference order (highest priority first).
 type Registry struct {

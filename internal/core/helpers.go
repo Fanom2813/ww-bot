@@ -3,7 +3,6 @@ package core
 import (
 	"strings"
 
-	"wwbot/internal/brain"
 	"wwbot/internal/inbox"
 )
 
@@ -36,15 +35,6 @@ func isGroup(b inbox.Batch) bool {
 		}
 	}
 	return false
-}
-
-// toTurns maps the ephemeral context window to brain turns.
-func toTurns(window []inbox.Msg) []brain.Turn {
-	turns := make([]brain.Turn, 0, len(window))
-	for _, m := range window {
-		turns = append(turns, brain.Turn{FromMe: m.IsFromMe, Name: m.PushName, Text: m.Text})
-	}
-	return turns
 }
 
 // mergeSummary appends a memory update to the existing summary, capping length.

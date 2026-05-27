@@ -1,14 +1,14 @@
 package llm
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
+
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 // OpenAIConfig configures an OpenAI-compatible provider.
@@ -21,18 +21,23 @@ type OpenAIConfig struct {
 }
 
 // OpenAICompatible talks to any endpoint implementing the OpenAI
-// /chat/completions API.
+// /chat/completions API, via the official openai-go SDK with a custom base URL.
 type OpenAICompatible struct {
 	cfg    OpenAIConfig
-	client *http.Client
+	client openai.Client
 }
 
 // NewOpenAICompatible constructs a provider from cfg.
 func NewOpenAICompatible(cfg OpenAIConfig) *OpenAICompatible {
-	return &OpenAICompatible{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 120 * time.Second},
+	opts := []option.RequestOption{option.WithRequestTimeout(120 * time.Second)}
+	if cfg.BaseURL != "" {
+		// The SDK appends "chat/completions" to the base, so keep the trailing slash.
+		opts = append(opts, option.WithBaseURL(strings.TrimRight(cfg.BaseURL, "/")+"/"))
 	}
+	if cfg.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(cfg.APIKey))
+	}
+	return &OpenAICompatible{cfg: cfg, client: openai.NewClient(opts...)}
 }
 
 func (o *OpenAICompatible) Name() string { return o.cfg.Name }
@@ -48,84 +53,49 @@ func (o *OpenAICompatible) Available(_ context.Context) bool {
 	return true
 }
 
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature,omitempty"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
-}
-
-type chatResponse struct {
-	Choices []struct {
-		Message chatMessage `json:"message"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
 // Complete sends the request and returns the assistant's text.
 func (o *OpenAICompatible) Complete(ctx context.Context, req Request) (string, error) {
-	msgs := make([]chatMessage, 0, len(req.Messages)+1)
+	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages)+1)
 	if req.System != "" {
-		msgs = append(msgs, chatMessage{Role: string(System), Content: req.System})
+		msgs = append(msgs, openai.SystemMessage(req.System))
 	}
 	for _, m := range req.Messages {
-		msgs = append(msgs, chatMessage{Role: string(m.Role), Content: m.Content})
+		if m.Role == Assistant {
+			msgs = append(msgs, openai.AssistantMessage(m.Content))
+		} else {
+			msgs = append(msgs, openai.UserMessage(m.Content))
+		}
 	}
 
-	body, err := json.Marshal(chatRequest{
-		Model:       o.cfg.Model,
-		Messages:    msgs,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-	})
+	params := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(o.cfg.Model),
+		Messages: msgs,
+	}
+	if req.Temperature > 0 {
+		params.Temperature = openai.Float(req.Temperature)
+	}
+	if req.MaxTokens > 0 {
+		params.MaxTokens = openai.Int(int64(req.MaxTokens))
+	}
+	if req.JSON {
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
+		}
+	}
+
+	resp, err := o.client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return "", fmt.Errorf("llm %s: marshal: %w", o.cfg.Name, err)
+		return "", fmt.Errorf("llm %s: %w", o.cfg.Name, err)
 	}
-
-	url := strings.TrimRight(o.cfg.BaseURL, "/") + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("llm %s: request: %w", o.cfg.Name, err)
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("llm %s: no choices in response", o.cfg.Name)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if o.cfg.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+o.cfg.APIKey)
+	content := strings.TrimSpace(resp.Choices[0].Message.Content)
+	if content == "" {
+		// 200 OK but no content — surface why so the registry can fall through and
+		// the cause is visible (e.g. JSON mode unsupported, or token cap hit).
+		return "", fmt.Errorf("llm %s: empty content (finish_reason=%q) — model returned nothing (may not support JSON mode, or hit the token cap)",
+			o.cfg.Name, resp.Choices[0].FinishReason)
 	}
-
-	resp, err := o.client.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("llm %s: do: %w", o.cfg.Name, err)
-	}
-	defer resp.Body.Close()
-
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("llm %s: status %d: %s", o.cfg.Name, resp.StatusCode, truncate(string(data), 300))
-	}
-
-	var cr chatResponse
-	if err := json.Unmarshal(data, &cr); err != nil {
-		return "", fmt.Errorf("llm %s: decode: %w", o.cfg.Name, err)
-	}
-	if cr.Error != nil {
-		return "", fmt.Errorf("llm %s: %s", o.cfg.Name, cr.Error.Message)
-	}
-	if len(cr.Choices) == 0 {
-		return "", fmt.Errorf("llm %s: empty response", o.cfg.Name)
-	}
-	return strings.TrimSpace(cr.Choices[0].Message.Content), nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
+	return content, nil
 }

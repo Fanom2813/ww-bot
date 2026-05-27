@@ -112,11 +112,19 @@ func TestScamFlagNotifies(t *testing.T) {
 	}
 }
 
-func TestEscalateActionNotifies(t *testing.T) {
+func TestEscalateActionBecomesDraft(t *testing.T) {
 	b, _ := brainWith(`{"action":"escalate","text":"draft reply","confidence":0.6,"reason":"unsure"}`)
 	out, _ := b.Decide(context.Background(), Input{Tier: TierAuto, Incoming: "?"})
-	if out.Action != ActNotify || out.Text != "draft reply" {
-		t.Fatalf("want notify w/ draft text, got %s text=%q", out.Action, out.Text)
+	if out.Action != ActDraft || out.Text != "draft reply" {
+		t.Fatalf("want draft w/ suggested text, got %s text=%q", out.Action, out.Text)
+	}
+}
+
+func TestNotifyActionNotifies(t *testing.T) {
+	b, _ := brainWith(`{"action":"notify","confidence":0.7,"reason":"heads up — looks like a sales pitch"}`)
+	out, _ := b.Decide(context.Background(), Input{Tier: TierAuto, Incoming: "special offer just for you!"})
+	if out.Action != ActNotify {
+		t.Fatalf("want notify, got %s", out.Action)
 	}
 }
 

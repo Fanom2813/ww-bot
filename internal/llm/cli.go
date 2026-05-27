@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 )
@@ -51,6 +52,7 @@ func (c *CLIAgent) Complete(ctx context.Context, req Request) (string, error) {
 		args = append(args, prompt)
 	}
 
+	log.Printf("[cli] %s: running %q args=%v (promptViaStdin=%v)", c.name, c.bin, args, c.promptViaStdin)
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -62,7 +64,14 @@ func (c *CLIAgent) Complete(ctx context.Context, req Request) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("llm %s: run: %w: %s", c.name, err, truncate(stderr.String(), 300))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	out := strings.TrimSpace(stdout.String())
+	if out == "" {
+		// Exited 0 but said nothing — treat as failure so the registry falls
+		// through, and surface stderr so the command can be fixed.
+		return "", fmt.Errorf("llm %s: empty output (check the command/args/prompt mode); stderr: %s",
+			c.name, truncate(stderr.String(), 400))
+	}
+	return out, nil
 }
 
 // flatten renders a Request into a single prompt string for CLIs that take one.

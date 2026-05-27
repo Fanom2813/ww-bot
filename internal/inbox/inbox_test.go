@@ -7,7 +7,7 @@ import (
 
 func TestCoalescesBurst(t *testing.T) {
 	flushed := make(chan Batch, 1)
-	d := New(Config{Quiet: 30 * time.Millisecond, MaxWait: time.Second, WindowSize: 10},
+	d := New(Config{Quiet: 30 * time.Millisecond, MaxWait: time.Second},
 		func(b Batch) { flushed <- b })
 
 	d.Add(Msg{ChatJID: "1@s", Text: "hi"})
@@ -29,7 +29,7 @@ func TestCoalescesBurst(t *testing.T) {
 
 func TestHumanTakeoverCancels(t *testing.T) {
 	flushed := make(chan Batch, 1)
-	d := New(Config{Quiet: 40 * time.Millisecond, MaxWait: time.Second, WindowSize: 10},
+	d := New(Config{Quiet: 40 * time.Millisecond, MaxWait: time.Second},
 		func(b Batch) { flushed <- b })
 
 	d.Add(Msg{ChatJID: "1@s", Text: "hello"})
@@ -44,27 +44,9 @@ func TestHumanTakeoverCancels(t *testing.T) {
 	}
 }
 
-func TestWindowTrim(t *testing.T) {
-	flushed := make(chan Batch, 1)
-	d := New(Config{Quiet: 20 * time.Millisecond, MaxWait: time.Second, WindowSize: 3},
-		func(b Batch) { flushed <- b })
-
-	for i := 0; i < 5; i++ {
-		d.Add(Msg{ChatJID: "1@s", Text: "m"})
-	}
-	select {
-	case b := <-flushed:
-		if len(b.Window) != 3 {
-			t.Fatalf("want window trimmed to 3, got %d", len(b.Window))
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("flush did not fire")
-	}
-}
-
 func TestSeparateChatsIndependent(t *testing.T) {
 	flushed := make(chan Batch, 2)
-	d := New(Config{Quiet: 25 * time.Millisecond, MaxWait: time.Second, WindowSize: 10},
+	d := New(Config{Quiet: 25 * time.Millisecond, MaxWait: time.Second},
 		func(b Batch) { flushed <- b })
 
 	d.Add(Msg{ChatJID: "a@s", Text: "x"})

@@ -10,7 +10,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"wwbot/internal/llm"
 )
@@ -29,6 +31,7 @@ type Turn struct {
 	FromMe bool
 	Name   string
 	Text   string
+	At     time.Time // when the message was sent (zero if unknown)
 }
 
 // Input is everything the brain needs to make a decision for one batch.
@@ -69,7 +72,28 @@ type Outcome struct {
 // Config tunes the brain.
 type Config struct {
 	MinConfidence float64 // below this, replies are escalated to a draft (default 0.7)
+	Persona       string  // user-editable system prompt; falls back to DefaultPersona
 }
+
+// DefaultPersona is the built-in writing/behavior guidance. It governs HOW the
+// bot writes (natural, in the user's voice, plain WhatsApp text). The strict
+// JSON output contract is appended separately and is NOT user-editable, so
+// customizing this can never break response parsing.
+const DefaultPersona = `You are replying to WhatsApp messages ON BEHALF OF the account owner — as if you are them, not an assistant.
+
+Write like a real person texting:
+- Sound completely natural and human. Never robotic, formal, or "AI-like".
+- Mirror how this contact and the owner actually text: tone, language, length, punctuation, emoji, slang, capitalization.
+- Keep it short — usually one or two lines, like a real WhatsApp reply.
+- Reply in the same language the contact is using.
+- Output PLAIN TEXT only. No markdown headings, code blocks, JSON, or bullet lists unless the person texts that way. Light WhatsApp formatting (*bold*, _italic_) is fine, sparingly.
+- NEVER reveal or imply you are an AI, bot, or automated — unless the per-contact instructions explicitly tell you to.
+
+Stay safe:
+- If you don't have enough information to answer accurately, don't guess.
+- Never make real-world commitments (meetings, money, yes/no to invitations) on the owner's behalf.
+- If a message looks like a scam, phishing, or impersonation, flag it.
+- It's better to stay silent or escalate than to send something wrong.`
 
 // Brain makes reply decisions using an LLM registry.
 type Brain struct {
@@ -87,7 +111,7 @@ func New(reg *llm.Registry, cfg Config) *Brain {
 
 // decision is the strict JSON contract the model must return.
 type decision struct {
-	Action       string   `json:"action"` // reply | escalate | silent
+	Action       string   `json:"action"` // reply | draft | notify | silent (escalate = draft)
 	Text         string   `json:"text"`
 	Confidence   float64  `json:"confidence"`
 	MemoryUpdate string   `json:"memory_update"`
@@ -119,10 +143,21 @@ func (b *Brain) Decide(ctx context.Context, in Input) (Outcome, error) {
 		out.Action = ActSilent
 		out.Reason = orDefault(dec.Reason, "model chose silence")
 		return out, nil
-	case "escalate":
+	case "notify":
+		// The model decided this only needs the owner's awareness (FYI / heads-up),
+		// not a reply. Any suggested text rides along in the notification.
 		out.Action = ActNotify
 		out.Text = dec.Text
-		out.Reason = orDefault(dec.Reason, "model was unsure")
+		out.Reason = orDefault(dec.Reason, "flagged for your attention")
+		return out, nil
+	case "escalate", "draft":
+		// The model wants the user to handle it (unsure, or needs info only the
+		// owner has). Queue it as a draft so it lands in the in-app approvals
+		// queue where the user can answer/edit and send — not just a fleeting
+		// notification.
+		out.Action = ActDraft
+		out.Text = dec.Text
+		out.Reason = orDefault(dec.Reason, "needs your input")
 		return out, nil
 	}
 
@@ -172,13 +207,18 @@ func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
 		in.Window = w
 	}
 
-	system := buildSystemPrompt(in)
+	persona := strings.TrimSpace(b.cfg.Persona)
+	if persona == "" {
+		persona = DefaultPersona
+	}
+	system := buildSystemPrompt(in, persona)
 	user := buildUserPrompt(in)
 
-	raw, _, err := b.reg.Complete(ctx, llm.Request{
+	raw, provider, err := b.reg.Complete(ctx, llm.Request{
 		System:      system,
 		Messages:    []llm.Message{{Role: llm.User, Content: user}},
 		Temperature: 0.3,
+		JSON:        true,
 		MaxTokens:   600,
 	})
 	if err != nil {
@@ -186,8 +226,14 @@ func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
 	}
 	dec, err := parseDecision(raw)
 	if err != nil {
-		// If the model didn't return valid JSON, escalate rather than guess.
-		return decision{Action: "escalate", Reason: "model response was not valid JSON"}, nil
+		snippet := raw
+		if len(snippet) > 800 {
+			snippet = snippet[:800] + "…"
+		}
+		log.Printf("[brain] non-JSON model response from %q (%d chars): %q", provider, len(raw), snippet)
+		// Unparseable output → there's no usable reply, so just notify (don't
+		// create an empty draft or guess).
+		return decision{Action: "notify", Reason: "model response was not valid JSON"}, nil
 	}
 	return dec, nil
 }

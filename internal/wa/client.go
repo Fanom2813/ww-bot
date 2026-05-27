@@ -226,6 +226,11 @@ func (c *Client) pumpQR(qrChan <-chan whatsmeow.QRChannelItem) {
 func (c *Client) onEvent(raw any) {
 	switch v := raw.(type) {
 	case *events.Message:
+		// Ignore Status updates, broadcast lists, and newsletters — the bot never
+		// replies to these, only to real 1-1 and group chats.
+		if s := v.Info.Chat.Server; s == types.BroadcastServer || s == types.NewsletterServer {
+			return
+		}
 		log.Printf("[wa] message chat=%q sender=%q fromMe=%v type=%s",
 			v.Info.Chat.String(), v.Info.Sender.String(), v.Info.IsFromMe, v.Info.Type)
 		m := toMessage(v)
