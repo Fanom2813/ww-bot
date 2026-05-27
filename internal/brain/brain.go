@@ -158,6 +158,20 @@ func (b *Brain) Decide(ctx context.Context, in Input) (Outcome, error) {
 
 // ask builds the prompt, calls the model, and parses the JSON decision.
 func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
+	// Defense-in-depth: scrub credential-looking tokens from everything that
+	// reaches the model — the incoming burst, the context window, and the
+	// rolling memory. in is a value copy, so this never affects callers/storage.
+	in.Incoming = Redact(in.Incoming)
+	in.Summary = Redact(in.Summary)
+	if len(in.Window) > 0 {
+		w := make([]Turn, len(in.Window))
+		for i, t := range in.Window {
+			t.Text = Redact(t.Text)
+			w[i] = t
+		}
+		in.Window = w
+	}
+
 	system := buildSystemPrompt(in)
 	user := buildUserPrompt(in)
 
