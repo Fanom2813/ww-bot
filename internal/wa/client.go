@@ -89,6 +89,11 @@ func (c *Client) SelfJID() string {
 // emitting QR events (and a Paired event on success). If already paired, it
 // reconnects using the stored session — no QR.
 func (c *Client) Start(ctx context.Context) error {
+	// Disconnect first if already connected (needed for retries after timeout).
+	if c.wm.IsConnected() {
+		c.wm.Disconnect()
+	}
+
 	if c.IsPaired() {
 		if err := c.wm.Connect(); err != nil {
 			return fmt.Errorf("wa: connect: %w", err)
@@ -127,21 +132,39 @@ func (c *Client) Stop() {
 	c.closeOnce.Do(func() { close(c.events) })
 }
 
+// Logout disconnects from WhatsApp and deletes the session so the next Start
+// begins a fresh QR pairing flow.
+func (c *Client) Logout(ctx context.Context) error {
+	c.wm.Disconnect()
+	if c.wm.Store.ID != nil {
+		if err := c.container.DeleteDevice(ctx, c.wm.Store); err != nil {
+			return fmt.Errorf("wa: delete session: %w", err)
+		}
+	}
+	c.emit(LoggedOut{})
+	return nil
+}
+
 // pumpQR forwards whatsmeow's QR-channel items as normalized events.
+// If the channel closes without a successful scan, PairingExpired is emitted
+// so the frontend can show a retry button.
 func (c *Client) pumpQR(qrChan <-chan whatsmeow.QRChannelItem) {
+	paired := false
 	for item := range qrChan {
 		switch item.Event {
 		case "code":
 			c.emit(QR{Code: item.Code})
 		case "success":
+			paired = true
 			var id string
 			if c.wm.Store.ID != nil {
 				id = c.wm.Store.ID.String()
 			}
 			c.emit(Paired{JID: id})
 		}
-		// "timeout"/"error" simply close the channel; the consumer can react
-		// to the absence of a Paired event.
+	}
+	if !paired {
+		c.emit(PairingExpired{})
 	}
 }
 
@@ -167,7 +190,7 @@ func (c *Client) onEvent(raw any) {
 	case *events.CallOfferNotice:
 		c.emit(Call{FromJID: v.From.String(), Video: v.Media == "video", Group: v.Type == "group"})
 	case *events.Connected:
-		c.emit(Connected{})
+		c.emit(Connected{JID: c.SelfJID()})
 	case *events.LoggedOut:
 		c.emit(LoggedOut{})
 	}

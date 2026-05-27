@@ -1,5 +1,6 @@
+import { Navigate } from "react-router";
 import { QRCodeSVG } from "qrcode.react";
-import { Loader2, MessageCircle, Smartphone } from "lucide-react";
+import { Loader2, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -8,15 +9,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { WAStatus } from "@/lib/useWhatsApp";
+import { useWA } from "@/lib/useWA";
 
-interface ConnectScreenProps {
-  status: WAStatus;
-  qr: string;
-  onLink: () => void;
-}
+export function ConnectScreen() {
+  const { status, qr, startPairing } = useWA();
 
-export function ConnectScreen({ status, qr, onLink }: ConnectScreenProps) {
+  // Already connected — redirect into the guarded app
+  if (status === "connected") return <Navigate to="/" replace />;
+
   const showQR = status === "pairing" && qr !== "";
   const generating = status === "pairing" && qr === "";
 
@@ -24,9 +24,7 @@ export function ConnectScreen({ status, qr, onLink }: ConnectScreenProps) {
     <div className="flex min-h-screen items-center justify-center bg-background p-8 text-foreground">
       <Card className="w-full max-w-md">
         <CardHeader className="items-center text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <MessageCircle className="h-6 w-6" />
-          </div>
+          <img src="/logo.png" alt="WW Bot" className="mx-auto mb-2 h-12 w-12 rounded-xl" />
           <CardTitle>Link your WhatsApp</CardTitle>
           <CardDescription>
             Connect the bot to your WhatsApp account to get started.
@@ -53,7 +51,7 @@ export function ConnectScreen({ status, qr, onLink }: ConnectScreenProps) {
           )}
 
           {status === "unpaired" && (
-            <Button onClick={onLink} className="gap-2">
+            <Button onClick={startPairing} className="gap-2">
               <Smartphone className="h-4 w-4" /> Show QR code
             </Button>
           )}

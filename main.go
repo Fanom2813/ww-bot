@@ -67,8 +67,11 @@ func main() {
 		Title: "WW Bot",
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
-			Backdrop:                application.MacBackdropTranslucent,
-			TitleBar:                application.MacTitleBarHiddenInset,
+			// Solid (non-vibrancy) backdrop: animating the sidebar width over a
+			// translucent backdrop forces macOS to re-blur every frame, which makes
+			// the collapse animation stutter.
+			Backdrop:  application.MacBackdropNormal,
+			TitleBar:  application.MacTitleBarHiddenInset,
 		},
 		BackgroundColour: application.NewRGB(10, 10, 10),
 		URL:              "/",

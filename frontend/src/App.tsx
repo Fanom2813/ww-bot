@@ -1,27 +1,55 @@
-import { Loader2 } from "lucide-react";
+import { Route, Routes } from "react-router";
+import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
-import { useWhatsApp } from "@/lib/useWhatsApp";
-import { useNotices } from "@/lib/useNotices";
+import { WAProvider } from "@/lib/WAContext";
+import { useWA } from "@/lib/useWA";
+import { RequireOnboarded, RequireConnected } from "@/components/RouteGuards";
+import { Onboarding } from "@/components/Onboarding";
 import { ConnectScreen } from "@/components/ConnectScreen";
-import { AppShell } from "@/components/AppShell";
+import { AppLayout } from "@/components/AppLayout";
+import { Dashboard } from "@/pages/Dashboard";
+import { Approvals } from "@/pages/Approvals";
+import { Contacts } from "@/pages/Contacts";
+import { Activity } from "@/pages/Activity";
+import { Settings } from "@/pages/Settings";
 
-function App() {
-  const { status, qr, jid, startPairing } = useWhatsApp();
-  useNotices();
+function AppRoutes() {
+  const { jid } = useWA();
 
   return (
     <>
-      {status === "loading" ? (
-        <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : status === "connected" ? (
-        <AppShell jid={jid} />
-      ) : (
-        <ConnectScreen status={status} qr={qr} onLink={startPairing} />
-      )}
+      <Routes>
+        {/* Public: onboarding wizard */}
+        <Route path="/onboarding" element={<Onboarding />} />
+
+        {/* Public: QR pair screen */}
+        <Route path="/connect" element={<ConnectScreen />} />
+
+        {/* Guarded: must be onboarded + connected */}
+        <Route element={<RequireOnboarded />}>
+          <Route element={<RequireConnected />}>
+            <Route element={<AppLayout jid={jid} />}>
+              <Route index element={<Dashboard />} />
+              <Route path="approvals" element={<Approvals />} />
+              <Route path="contacts" element={<Contacts />} />
+              <Route path="activity" element={<Activity />} />
+              <Route path="settings" element={<Settings />} />
+            </Route>
+          </Route>
+        </Route>
+      </Routes>
       <Toaster richColors position="top-right" />
     </>
+  );
+}
+
+function App() {
+  return (
+    <ThemeProvider attribute="class" defaultTheme="system" storageKey="ww-theme" enableSystem>
+      <WAProvider>
+        <AppRoutes />
+      </WAProvider>
+    </ThemeProvider>
   );
 }
 

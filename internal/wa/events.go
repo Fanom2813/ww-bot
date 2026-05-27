@@ -14,11 +14,17 @@ type QR struct{ Code string }
 // Paired is emitted once the device successfully links to an account.
 type Paired struct{ JID string }
 
-// Connected is emitted when the socket connects to WhatsApp servers.
-type Connected struct{}
+// Connected is emitted when the socket connects to WhatsApp servers. JID carries
+// the paired account's own number JID so the UI can show it on reconnect (the
+// Paired event only fires during a fresh QR scan).
+type Connected struct{ JID string }
 
 // LoggedOut is emitted when the session is invalidated; the user must re-pair.
 type LoggedOut struct{}
+
+// PairingExpired is emitted when the QR channel closes without a successful
+// scan (timeout or error). The frontend should show a retry button.
+type PairingExpired struct{}
 
 // MessageKind is a coarse classification of an inbound message.
 type MessageKind string
@@ -55,9 +61,10 @@ type Call struct {
 	Group   bool
 }
 
-func (QR) isWAEvent()        {}
-func (Paired) isWAEvent()    {}
-func (Connected) isWAEvent() {}
-func (LoggedOut) isWAEvent() {}
-func (Message) isWAEvent()   {}
-func (Call) isWAEvent()      {}
+func (QR) isWAEvent()            {}
+func (Paired) isWAEvent()        {}
+func (Connected) isWAEvent()     {}
+func (LoggedOut) isWAEvent()     {}
+func (PairingExpired) isWAEvent() {}
+func (Message) isWAEvent()       {}
+func (Call) isWAEvent()          {}

@@ -73,6 +73,25 @@ func (s *WhatsAppService) StartPairing() error {
 // IsPaired reports whether a session already exists.
 func (s *WhatsAppService) IsPaired() bool { return s.client != nil && s.client.IsPaired() }
 
+// JID returns the paired account's own number JID (e.g. "12345@s.whatsapp.net"),
+// or "" if not paired. The frontend calls this on startup to display the number,
+// since the "paired" event only fires during a fresh QR scan.
+func (s *WhatsAppService) JID() string {
+	if s.client == nil {
+		return ""
+	}
+	return s.client.SelfJID()
+}
+
+// Logout disconnects from WhatsApp and deletes the session, forcing a fresh
+// QR pair on the next StartPairing call.
+func (s *WhatsAppService) Logout() error {
+	if s.client == nil {
+		return nil
+	}
+	return s.client.Logout(context.Background())
+}
+
 // bridge forwards wa events: connection state to the frontend, messages to core.
 func (s *WhatsAppService) bridge(events <-chan wa.Event) {
 	for e := range events {
@@ -84,9 +103,11 @@ func (s *WhatsAppService) bridge(events <-chan wa.Event) {
 			emitWA(WAEvent{Type: "paired", JID: ev.JID})
 		case wa.Connected:
 			s.core.SetSelfJID(s.client.SelfJID())
-			emitWA(WAEvent{Type: "connected"})
+			emitWA(WAEvent{Type: "connected", JID: ev.JID})
 		case wa.LoggedOut:
 			emitWA(WAEvent{Type: "loggedout"})
+		case wa.PairingExpired:
+			emitWA(WAEvent{Type: "expired"})
 		case wa.Message:
 			s.core.OnInbound(core.Inbound{
 				ChatJID: ev.ChatJID, SenderJID: ev.SenderJID, PushName: ev.PushName,
