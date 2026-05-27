@@ -83,6 +83,15 @@ func (s *WhatsAppService) JID() string {
 	return s.client.SelfJID()
 }
 
+// Contacts returns the user's WhatsApp address book (synced from the phone) so
+// the UI can list them and add the ones the bot should manage.
+func (s *WhatsAppService) Contacts() ([]wa.WAContact, error) {
+	if s.client == nil {
+		return nil, nil
+	}
+	return s.client.Contacts(context.Background())
+}
+
 // Logout disconnects from WhatsApp and deletes the session, forcing a fresh
 // QR pair on the next StartPairing call.
 func (s *WhatsAppService) Logout() error {
@@ -104,6 +113,8 @@ func (s *WhatsAppService) bridge(events <-chan wa.Event) {
 		case wa.Connected:
 			s.core.SetSelfJID(s.client.SelfJID())
 			emitWA(WAEvent{Type: "connected", JID: ev.JID})
+		case wa.Disconnected:
+			emitWA(WAEvent{Type: "disconnected"})
 		case wa.LoggedOut:
 			emitWA(WAEvent{Type: "loggedout"})
 		case wa.PairingExpired:

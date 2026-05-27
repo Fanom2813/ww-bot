@@ -29,11 +29,12 @@ const dashboardRoutes: Route[] = [
 type Props = {
   jid: string;
   paused: boolean;
+  online: boolean;
   isMac: boolean;
   onLogout: () => void;
 };
 
-export function DashboardSidebar({ jid, paused, isMac, onLogout }: Props) {
+export function DashboardSidebar({ jid, paused, online, isMac, onLogout }: Props) {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
 
@@ -65,7 +66,7 @@ export function DashboardSidebar({ jid, paused, isMac, onLogout }: Props) {
       </SidebarContent>
 
       <SidebarFooter className="px-2">
-        <NavUser jid={jid} paused={paused} onLogout={onLogout} />
+        <NavUser jid={jid} paused={paused} online={online} onLogout={onLogout} />
       </SidebarFooter>
     </Sidebar>
   );

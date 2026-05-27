@@ -10,9 +10,11 @@ export {
 } from "../../bindings/wwbot";
 
 export { Contact, Draft, Activity } from "../../bindings/wwbot/internal/store/models";
+export { WAContact } from "../../bindings/wwbot/internal/wa/models";
 export {
   Settings,
   ProviderSetting,
   STTSetting,
   SafetySetting,
+  PendingContact,
 } from "../../bindings/wwbot/internal/core/models";

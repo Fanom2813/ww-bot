@@ -18,6 +18,9 @@ export function useWhatsApp() {
   const [status, setStatus] = useState<WAStatus>("loading");
   const [qr, setQR] = useState("");
   const [jid, setJid] = useState("");
+  // Whether the WhatsApp socket is currently connected. Starts optimistic and
+  // flips false only on a real "disconnected" event (whatsmeow auto-reconnects).
+  const [online, setOnline] = useState(true);
 
   useEffect(() => {
     dbg("init — checking IsPaired…");
@@ -55,10 +58,15 @@ export function useWhatsApp() {
         case "connected":
           if (ev.jid) setJid(ev.jid);
           setStatus("connected");
+          setOnline(true);
+          break;
+        case "disconnected":
+          setOnline(false);
           break;
         case "loggedout":
           setQR("");
           setJid("");
+          setOnline(true);
           setStatus("unpaired");
           break;
         case "expired":
@@ -86,5 +94,5 @@ export function useWhatsApp() {
       });
   }, []);
 
-  return { status, qr, jid, startPairing };
+  return { status, qr, jid, online, startPairing };
 }

@@ -1,45 +1,70 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router";
+import { Events } from "@wailsio/runtime";
 import { toast } from "sonner";
 import { Page } from "@/components/Page";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import {
   ActivityService,
   ApprovalsService,
+  ContactsService,
   ControlService,
+  Contact,
+  Draft,
+  PendingContact,
 } from "@/lib/api";
+import { ContactDialog, TodayContextDialog } from "@/components/dialogs";
+import { StatCards } from "@/components/StatCards";
 import {
+  Check,
   CheckCircle2,
-  Clock,
-  Inbox,
   MessageSquare,
+  NotebookPen,
   Send,
+  UserPlus,
+  X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+
+function numberOf(jid: string): string {
+  const n = jid.split("@")[0].split(":")[0];
+  return n ? `+${n}` : jid;
+}
 
 export function Dashboard() {
   const [status, setStatus] = useState("Loading…");
   const [paused, setPaused] = useState(false);
   const [pending, setPending] = useState(0);
   const [todayCount, setTodayCount] = useState(0);
-  const [today, setToday] = useState("");
   const [recent, setRecent] = useState<
     { id: number; kind: string; summary: string; ts: string }[]
   >([]);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [pendingNew, setPendingNew] = useState<PendingContact[]>([]);
+  const [saving, setSaving] = useState<Contact | null>(null);
+
+  const loadActions = () => {
+    ApprovalsService.List()
+      .then((d) => {
+        setDrafts(d ?? []);
+        setPending((d ?? []).length);
+      })
+      .catch(() => {});
+    ContactsService.PendingNew()
+      .then((p) => setPendingNew(p ?? []))
+      .catch(() => {});
+  };
 
   useEffect(() => {
     ControlService.Status().then(setStatus).catch(() => setStatus("unavailable"));
     ControlService.Paused().then(setPaused).catch(() => {});
-    ApprovalsService.List().then((d) => setPending((d ?? []).length)).catch(() => {});
+    loadActions();
     ActivityService.List(24)
       .then((a) => {
         setRecent((a ?? []).map((x) => ({ id: x.id, kind: x.kind, summary: x.summary, ts: x.ts })));
@@ -50,13 +75,33 @@ export function Dashboard() {
         );
       })
       .catch(() => {});
+
+    // Live-refresh the actions list when a new number comes in.
+    const off = Events.On("unknown", () => loadActions());
+    return () => off();
   }, []);
 
-  const saveToday = () => {
-    ControlService.SetToday(today)
-      .then(() => toast("Today's context saved"))
-      .catch((e) => toast.error("Couldn't save", { description: String(e) }));
-  };
+  const approveDraft = (id: number) =>
+    ApprovalsService.Approve(id, "")
+      .then(() => {
+        toast.success("Reply approved & sent");
+        loadActions();
+      })
+      .catch((e) => toast.error("Couldn't approve", { description: String(e) }));
+
+  const rejectDraft = (id: number) =>
+    ApprovalsService.Reject(id)
+      .then(loadActions)
+      .catch((e) => toast.error("Couldn't reject", { description: String(e) }));
+
+  const ignoreNew = (jid: string) =>
+    ContactsService.DismissNew(jid)
+      .then(loadActions)
+      .catch(() => {});
+
+  const actionsCount = drafts.length + pendingNew.length;
+
+  const [todayOpen, setTodayOpen] = useState(false);
 
   const kindIcon: Record<string, typeof Send> = {
     sent: Send,
@@ -65,82 +110,97 @@ export function Dashboard() {
   };
 
   return (
-    <Page title="Dashboard" description="Status, today's context, and recent activity.">
+    <Page
+      title="Dashboard"
+      description="Status, today's context, and recent activity."
+      actions={
+        <Button variant="outline" size="sm" onClick={() => setTodayOpen(true)}>
+          <NotebookPen className="size-4" /> Today's context
+        </Button>
+      }
+    >
       <div className="grid gap-4">
         {/* Status + metrics row */}
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Card>
-            <CardContent className="flex items-center gap-3 py-4">
-              <div
-                className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-full",
-                  paused
-                    ? "bg-amber-500/15 text-amber-600"
-                    : "bg-green-500/15 text-green-600",
-                )}
-              >
-                {paused ? (
-                  <Clock className="h-5 w-5" />
-                ) : (
-                  <CheckCircle2 className="h-5 w-5" />
-                )}
-              </div>
-              <div>
-                <p className="text-sm font-medium">{paused ? "Paused" : "Active"}</p>
-                <p className="text-xs text-muted-foreground">{status}</p>
-              </div>
-            </CardContent>
-          </Card>
+        <StatCards
+          items={[
+            {
+              label: "Status",
+              value: paused ? "Paused" : "Active",
+              hint: status,
+              tone: paused ? "negative" : "positive",
+            },
+            {
+              label: "Pending approvals",
+              value: pending,
+              hint: pending > 0 ? "needs review" : "clear",
+              tone: pending > 0 ? "negative" : "positive",
+            },
+            { label: "Actions today", value: todayCount, hint: "since midnight" },
+          ]}
+        />
 
-          <NavLink to="/approvals" className="group">
-            <Card className="transition-colors group-hover:border-primary/40">
-              <CardContent className="flex items-center gap-3 py-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/15 text-blue-600">
-                  <Inbox className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">
-                    {pending} pending approval{pending !== 1 ? "s" : ""}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Review draft replies</p>
-                </div>
-              </CardContent>
-            </Card>
-          </NavLink>
-
-          <Card>
-            <CardContent className="flex items-center gap-3 py-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-500/15 text-purple-600">
-                <Send className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-sm font-medium">
-                  {todayCount} action{todayCount !== 1 ? "s" : ""} today
-                </p>
-                <p className="text-xs text-muted-foreground">Bot activity since midnight</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Today's context */}
+        {/* Actions needed + Recent activity, side by side on wide screens */}
+        <div className="grid gap-4 lg:grid-cols-2">
+        {/* Actions needed */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Today's context</CardTitle>
-            <CardDescription>
-              Tell the bot what you're doing today so it answers people accurately.
-            </CardDescription>
+            <CardTitle className="text-base">Actions needed</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <Textarea
-              placeholder="e.g. Deep work all morning, free after 3pm, traveling this evening…"
-              value={today}
-              onChange={(e) => setToday(e.target.value)}
-              rows={3}
-            />
-            <Button onClick={saveToday} disabled={!today.trim()}>
-              Save
-            </Button>
+          <CardContent>
+            {actionsCount === 0 ? (
+              <p className="text-sm text-muted-foreground">You're all caught up 🎉</p>
+            ) : (
+              <div className="divide-y">
+                {drafts.map((d) => (
+                  <div key={`draft-${d.id}`} className="flex items-center gap-3 py-3 first:pt-0">
+                    <MessageSquare className="size-4 shrink-0 text-blue-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        Reply to {d.senderName || numberOf(d.chatJid)}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">{d.reply}</p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => approveDraft(d.id)}>
+                      <Check className="size-4" /> Approve
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => rejectDraft(d.id)}>
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                ))}
+                {pendingNew.map((p) => (
+                  <div key={`new-${p.jid}`} className="flex items-center gap-3 py-3 first:pt-0">
+                    <UserPlus className="size-4 shrink-0 text-amber-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        New number {p.name || numberOf(p.jid)}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {p.preview || "Not in your contacts"}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setSaving(
+                          new Contact({
+                            jid: p.jid,
+                            name: p.name,
+                            tier: "auto" as Contact["tier"],
+                          }),
+                        )
+                      }
+                    >
+                      <Check className="size-4" /> Save
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => ignoreNew(p.jid)}>
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -181,7 +241,17 @@ export function Dashboard() {
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
+
+      <ContactDialog
+        contact={saving}
+        jidEditable={false}
+        onClose={() => setSaving(null)}
+        onSaved={loadActions}
+      />
+
+      <TodayContextDialog open={todayOpen} onOpenChange={setTodayOpen} />
     </Page>
   );
 }

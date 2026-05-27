@@ -9,6 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +25,12 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 )
+
+// WAContact is a synced address-book contact from WhatsApp.
+type WAContact struct {
+	JID  string `json:"jid"`
+	Name string `json:"name"`
+}
 
 // Config configures a Client.
 type Config struct {
@@ -126,6 +135,45 @@ func (c *Client) SendText(ctx context.Context, to, text string) error {
 	return nil
 }
 
+// Contacts returns the user's WhatsApp address book (synced from the phone) as
+// individual user contacts with a display name, sorted by name. Returns nil if
+// not paired.
+func (c *Client) Contacts(ctx context.Context) ([]WAContact, error) {
+	if c.wm.Store.ID == nil {
+		return nil, nil
+	}
+	all, err := c.wm.Store.Contacts.GetAllContacts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("wa: get contacts: %w", err)
+	}
+	self := c.wm.Store.ID.ToNonAD().String()
+	out := make([]WAContact, 0, len(all))
+	for jid, info := range all {
+		if jid.Server != types.DefaultUserServer {
+			continue // skip groups, LID-only, broadcast, etc.
+		}
+		nonAD := jid.ToNonAD().String()
+		if nonAD == self {
+			continue
+		}
+		name := firstNonEmpty(info.FullName, info.FirstName, info.PushName, info.BusinessName, jid.User)
+		out = append(out, WAContact{JID: nonAD, Name: name})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // Stop disconnects from WhatsApp and closes the events channel.
 func (c *Client) Stop() {
 	c.wm.Disconnect()
@@ -174,6 +222,8 @@ func (c *Client) pumpQR(qrChan <-chan whatsmeow.QRChannelItem) {
 func (c *Client) onEvent(raw any) {
 	switch v := raw.(type) {
 	case *events.Message:
+		log.Printf("[wa] message chat=%q sender=%q fromMe=%v type=%s",
+			v.Info.Chat.String(), v.Info.Sender.String(), v.Info.IsFromMe, v.Info.Type)
 		m := toMessage(v)
 		if am := v.Message.GetAudioMessage(); am != nil {
 			// Download voice-note bytes so consumers can transcribe them.
@@ -191,6 +241,8 @@ func (c *Client) onEvent(raw any) {
 		c.emit(Call{FromJID: v.From.String(), Video: v.Media == "video", Group: v.Type == "group"})
 	case *events.Connected:
 		c.emit(Connected{JID: c.SelfJID()})
+	case *events.Disconnected:
+		c.emit(Disconnected{})
 	case *events.LoggedOut:
 		c.emit(LoggedOut{})
 	}

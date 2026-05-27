@@ -12,6 +12,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,19 @@ import (
 
 // Notifier pushes a user-facing notification (mapped to a UI event by the app).
 type Notifier func(level, title, body string)
+
+// UnknownNotifier is called the first time an unsaved number messages the user,
+// so the app can prompt to save them. preview is a short excerpt of the message.
+type UnknownNotifier func(jid, name, preview string)
+
+// PendingContact is an unsaved number awaiting a save/ignore decision, surfaced
+// in the UI as an "action needed".
+type PendingContact struct {
+	JID     string    `json:"jid"`
+	Name    string    `json:"name"`
+	Preview string    `json:"preview"`
+	At      time.Time `json:"at"`
+}
 
 // SendFunc delivers a message to a JID (wraps wa.Client.SendText).
 type SendFunc func(ctx context.Context, toJID, text string) error
@@ -57,6 +72,9 @@ type Core struct {
 	gate     *safety.Gate
 	debounce *inbox.Debouncer
 
+	onUnknown       UnknownNotifier
+	pendingUnknown  map[string]PendingContact // unsaved numbers awaiting a save/ignore decision
+
 	send    SendFunc
 	selfJID string
 	ctx     context.Context
@@ -71,10 +89,17 @@ func New(ctx context.Context, db *store.DB, notify Notifier) (*Core, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Core{db: db, notify: notify, scheduler: schedule.New(), settings: s, ctx: ctx}
+	c := &Core{
+		db: db, notify: notify, scheduler: schedule.New(), settings: s, ctx: ctx,
+		pendingUnknown: make(map[string]PendingContact),
+	}
 	c.build(s)
 	return c, nil
 }
+
+// OnUnknownContact registers the callback invoked the first time an unsaved
+// number messages the user. fn may be nil to disable the prompt.
+func (c *Core) OnUnknownContact(fn UnknownNotifier) { c.onUnknown = fn }
 
 // build (re)constructs the LLM registry, transcriber, brain, gate, and inbox
 // from settings. The gate uses a thunk so the sender can be attached later.
@@ -143,10 +168,26 @@ func (c *Core) registerGreetings() {
 
 // OnInbound is the pipeline entry point for an incoming message.
 func (c *Core) OnInbound(in Inbound) {
-	// Self-chat commands / daily notes.
-	if c.selfJID != "" && in.IsFromMe && in.ChatJID == c.selfJID {
+	log.Printf("[core] inbound chat=%q sender=%q fromMe=%v group=%v kind=%s self=%q text=%q",
+		in.ChatJID, in.SenderJID, in.IsFromMe, in.IsGroup, in.Kind, c.selfJID, preview(in.Text))
+
+	// Self-chat commands / daily notes. A self-chat is "note to self": you sent
+	// it (IsFromMe) and the chat is your own number. We accept either a match
+	// against the stored self-JID or chat==sender, which is robust to JID-format
+	// differences (e.g. LID vs phone-number addressing).
+	if in.IsFromMe && in.ChatJID != "" &&
+		(in.ChatJID == c.selfJID || in.ChatJID == in.SenderJID) {
+		log.Printf("[core] -> self-command: %q", in.Text)
 		c.handleSelfInput(in)
 		return
+	}
+
+	// Surface unknown 1-1 senders immediately (don't wait for the reply debounce)
+	// so the "save this contact?" action shows up the moment they message.
+	if !in.IsFromMe && !in.IsGroup && in.ChatJID != "" {
+		if _, err := c.db.GetContact(c.ctx, in.ChatJID); errors.Is(err, store.ErrNotFound) {
+			c.flagUnknown(in.ChatJID, in.PushName, in.Text)
+		}
 	}
 
 	text := in.Text
@@ -183,8 +224,40 @@ func (c *Core) transcribe(in Inbound) string {
 // handleBatch runs the brain on a coalesced batch and routes the outcome.
 func (c *Core) handleBatch(b inbox.Batch) {
 	ctx := c.ctx
-	contact, _ := c.db.GetContact(ctx, b.ChatJID)
+	contact, err := c.db.GetContact(ctx, b.ChatJID)
+	unknown := errors.Is(err, store.ErrNotFound)
+
+	c.mu.RLock()
+	guestMode := c.settings.GuestMode
+	guestTier := c.settings.GuestTier
+	c.mu.RUnlock()
+
+	if unknown && !isGroup(b) {
+		// The save prompt was already queued in OnInbound; this is a safety net.
+		// Whether the bot also REPLIES depends on guest mode: off → stop here;
+		// on → fall through and handle them at the configured guest tier.
+		var name string
+		for _, m := range b.Messages {
+			if m.PushName != "" {
+				name = m.PushName
+				break
+			}
+		}
+		incoming, _ := summarizeBurst(b, "")
+		c.flagUnknown(b.ChatJID, name, incoming)
+		if !guestMode {
+			return
+		}
+	}
+
 	tier := contact.Tier
+	if tier == "" {
+		if unknown && !isGroup(b) {
+			tier = store.TrustTier(guestTier) // guest-mode reply tier for strangers
+		} else {
+			tier = store.TierNotify
+		}
+	}
 	if tier == "" {
 		tier = store.TierNotify
 	}
@@ -233,8 +306,57 @@ func (c *Core) handleBatch(b inbox.Batch) {
 		}
 		c.notify("notify", senderName, body)
 	case brain.ActSilent:
-		// nothing to do
+		reason := out.Reason
+		if reason == "" {
+			reason = "decided no reply was needed"
+		}
+		_ = c.db.LogActivity(ctx, "silent", b.ChatJID, reason)
 	}
+}
+
+// promptUnknown fires the save-this-contact prompt the first time an unsaved
+// number messages the user. It dedupes per JID so repeated messages from the
+// same unknown number don't re-prompt.
+// flagUnknown records an unsaved number as a pending save/ignore action and
+// notifies the UI, once per number (deduped while it stays pending).
+func (c *Core) flagUnknown(jid, name, text string) {
+	c.mu.Lock()
+	_, already := c.pendingUnknown[jid]
+	c.mu.Unlock()
+	if already {
+		return
+	}
+	pc := PendingContact{JID: jid, Name: name, Preview: preview(text), At: time.Now()}
+
+	c.mu.Lock()
+	c.pendingUnknown[jid] = pc
+	c.mu.Unlock()
+
+	_ = c.db.LogActivity(c.ctx, "flag", jid, "new number — save prompt")
+	log.Printf("[core] new-number prompt queued for %s", jid)
+	if c.onUnknown != nil {
+		c.onUnknown(pc.JID, pc.Name, pc.Preview)
+	}
+}
+
+// PendingContacts returns unsaved numbers awaiting a save/ignore decision,
+// newest first.
+func (c *Core) PendingContacts() []PendingContact {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]PendingContact, 0, len(c.pendingUnknown))
+	for _, p := range c.pendingUnknown {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	return out
+}
+
+// DismissContact removes a number from the pending list without saving it.
+func (c *Core) DismissContact(jid string) {
+	c.mu.Lock()
+	delete(c.pendingUnknown, jid)
+	c.mu.Unlock()
 }
 
 func (c *Core) queueDraft(chatJID, senderName, incoming, reply, reason string, conf float64) {
@@ -250,27 +372,39 @@ func (c *Core) queueDraft(chatJID, senderName, incoming, reply, reason string, c
 
 func (c *Core) handleSelfInput(in Inbound) {
 	cmd := commands.Parse(in.Text)
+	var summary string
 	switch cmd.Kind {
 	case commands.Pause:
 		c.Pause()
 		c.confirmSelf("⏸️ Bot paused. /resume to continue.")
+		summary = "/pause — auto-replies stopped"
 	case commands.Resume:
 		c.Resume()
 		c.confirmSelf("▶️ Bot resumed.")
+		summary = "/resume — auto-replies on"
 	case commands.Status:
 		c.confirmSelf(c.Status())
+		summary = "/status"
 	case commands.Help:
 		c.confirmSelf(helpText)
+		summary = "/help"
 	case commands.Today:
 		_ = c.db.SetDailyContext(c.ctx, time.Now().Format("2006-01-02"), cmd.Text)
 		c.confirmSelf("📝 Got it — today's context updated.")
+		summary = "/today — set: " + preview(cmd.Text)
 	case commands.Tier:
 		c.applyTier(cmd.Target, cmd.Tier)
+		summary = fmt.Sprintf("/tier %s → %s", cmd.Target, cmd.Tier)
 	case commands.Note:
 		c.appendToday(cmd.Text)
 		c.confirmSelf("📝 Noted for today.")
+		summary = "note added to today: " + preview(cmd.Text)
 	case commands.Unknown:
 		c.confirmSelf("Unknown command. " + helpText)
+		summary = "unknown command: " + preview(in.Text)
+	}
+	if summary != "" {
+		_ = c.db.LogActivity(c.ctx, "command", c.selfJID, summary)
 	}
 }
 
@@ -353,7 +487,10 @@ func (c *Core) RejectDraft(id int64) error {
 // ---- passthrough accessors for the UI -----------------------------------
 
 func (c *Core) ListContacts() ([]store.Contact, error)      { return c.db.ListContacts(c.ctx) }
-func (c *Core) UpsertContact(ct store.Contact) error        { return c.db.UpsertContact(c.ctx, ct) }
+func (c *Core) UpsertContact(ct store.Contact) error {
+	c.DismissContact(ct.JID) // saving resolves any pending "new number" prompt
+	return c.db.UpsertContact(c.ctx, ct)
+}
 func (c *Core) ListActivity(limit int) ([]store.Activity, error) {
 	return c.db.ListActivity(c.ctx, limit)
 }
@@ -361,6 +498,12 @@ func (c *Core) ListActivity(limit int) ([]store.Activity, error) {
 // SetToday sets today's context from the UI.
 func (c *Core) SetToday(text string) error {
 	return c.db.SetDailyContext(c.ctx, time.Now().Format("2006-01-02"), text)
+}
+
+// Today returns today's saved context (empty if none).
+func (c *Core) Today() string {
+	txt, _ := c.db.GetDailyContext(c.ctx, time.Now().Format("2006-01-02"))
+	return txt
 }
 
 // GetSettings returns the current settings.
@@ -402,5 +545,12 @@ func (c *Core) Status() string {
 	return fmt.Sprintf("Bot is %s · %d draft(s) awaiting review.", state, len(pending))
 }
 
-const helpText = "Commands: /pause, /resume, /status, /today <text>, /tier <name> <auto|draft|notify>. " +
-	"Any other message becomes a note for today."
+const helpText = "🤖 *WW Bot — commands*\n" +
+	"(only work here, in your own chat)\n\n" +
+	"/help — show this menu\n" +
+	"/status — show bot status\n" +
+	"/pause — stop auto-replies\n" +
+	"/resume — resume auto-replies\n" +
+	"/today <text> — set today's context\n" +
+	"/tier <name> <auto|draft|notify> — set how the bot handles a contact\n\n" +
+	"Any other text here becomes a note for today."

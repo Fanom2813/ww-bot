@@ -7,6 +7,7 @@ import { RequireOnboarded, RequireConnected } from "@/components/RouteGuards";
 import { Onboarding } from "@/components/Onboarding";
 import { ConnectScreen } from "@/components/ConnectScreen";
 import { AppLayout } from "@/components/AppLayout";
+import { NewContactPrompt } from "@/components/dialogs";
 import { Dashboard } from "@/pages/Dashboard";
 import { Approvals } from "@/pages/Approvals";
 import { Contacts } from "@/pages/Contacts";
@@ -14,7 +15,7 @@ import { Activity } from "@/pages/Activity";
 import { Settings } from "@/pages/Settings";
 
 function AppRoutes() {
-  const { jid } = useWA();
+  const { jid, online } = useWA();
 
   return (
     <>
@@ -28,7 +29,7 @@ function AppRoutes() {
         {/* Guarded: must be onboarded + connected */}
         <Route element={<RequireOnboarded />}>
           <Route element={<RequireConnected />}>
-            <Route element={<AppLayout jid={jid} />}>
+            <Route element={<AppLayout jid={jid} online={online} />}>
               <Route index element={<Dashboard />} />
               <Route path="approvals" element={<Approvals />} />
               <Route path="contacts" element={<Contacts />} />
@@ -39,6 +40,7 @@ function AppRoutes() {
         </Route>
       </Routes>
       <Toaster richColors position="top-right" />
+      <NewContactPrompt />
     </>
   );
 }

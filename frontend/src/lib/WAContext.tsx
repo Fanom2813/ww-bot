@@ -6,6 +6,7 @@ interface WAContextValue {
   status: WAStatus;
   qr: string;
   jid: string;
+  online: boolean;
   startPairing: () => void;
 }
 

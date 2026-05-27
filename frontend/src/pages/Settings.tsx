@@ -8,6 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Settings as SettingsModel, SettingsService } from "@/lib/api";
 
 export function Settings() {
@@ -49,6 +56,47 @@ export function Settings() {
   return (
     <Page title="Settings" description="AI backends, voice, and anti-ban safety.">
       <div className="grid gap-6">
+        {/* Reply mode */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Reply mode</CardTitle>
+            <CardDescription>
+              Saved contacts are always handled by their trust tier. Guest mode also lets
+              the bot reply to people who aren&apos;t in your contacts — 1-1 chats only,
+              never groups.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-3">
+              <Switch checked={s.guestMode} onCheckedChange={(v) => set({ guestMode: v })} />
+              <div>
+                <p className="text-sm font-medium">Guest mode</p>
+                <p className="text-xs text-muted-foreground">
+                  When off, a new number only triggers a “save contact?” prompt — no reply.
+                </p>
+              </div>
+            </div>
+            {s.guestMode && (
+              <div className="max-w-xs space-y-1">
+                <Label>How to handle guests</Label>
+                <Select
+                  value={s.guestTier || "auto"}
+                  onValueChange={(v) => set({ guestTier: v ?? "auto" })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto-send replies</SelectItem>
+                    <SelectItem value="draft">Draft for approval</SelectItem>
+                    <SelectItem value="notify">Notify only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* AI backends */}
         <Card>
           <CardHeader>

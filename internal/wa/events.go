@@ -19,6 +19,10 @@ type Paired struct{ JID string }
 // Paired event only fires during a fresh QR scan).
 type Connected struct{ JID string }
 
+// Disconnected is emitted when the socket drops (network loss, server close).
+// whatsmeow auto-reconnects; a Connected event follows once it recovers.
+type Disconnected struct{}
+
 // LoggedOut is emitted when the session is invalidated; the user must re-pair.
 type LoggedOut struct{}
 
@@ -64,6 +68,7 @@ type Call struct {
 func (QR) isWAEvent()            {}
 func (Paired) isWAEvent()        {}
 func (Connected) isWAEvent()     {}
+func (Disconnected) isWAEvent()  {}
 func (LoggedOut) isWAEvent()     {}
 func (PairingExpired) isWAEvent() {}
 func (Message) isWAEvent()       {}

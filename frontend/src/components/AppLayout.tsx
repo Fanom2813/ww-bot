@@ -5,7 +5,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { DashboardSidebar } from "@/components/sidebar-02/app-sidebar";
 import { ControlService, WhatsAppService } from "@/lib/api";
 
-export function AppLayout({ jid }: { jid: string }) {
+export function AppLayout({ jid, online }: { jid: string; online: boolean }) {
   const [paused, setPaused] = useState(false);
   const [isMac, setIsMac] = useState(false);
   const navigate = useNavigate();
@@ -26,7 +26,7 @@ export function AppLayout({ jid }: { jid: string }) {
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
-      <DashboardSidebar jid={jid} paused={paused} isMac={isMac} onLogout={handleLogout} />
+      <DashboardSidebar jid={jid} paused={paused} online={online} isMac={isMac} onLogout={handleLogout} />
       {/* The inset itself doesn't scroll; the Page body scrolls internally so
           the page header stays pinned. */}
       <SidebarInset className="min-h-0 overflow-hidden">

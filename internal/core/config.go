@@ -65,6 +65,13 @@ type Settings struct {
 	Greetings     []GreetingSetting `json:"greetings"`
 	MinConfidence float64           `json:"minConfidence"`
 	MinSTTConf    float64           `json:"minSttConfidence"`
+	// GuestMode, when true, lets the bot reply to 1-1 messages from people who
+	// are NOT in your contacts (never groups). When false, an unknown sender only
+	// triggers the "save this contact?" prompt and gets no reply.
+	GuestMode bool `json:"guestMode"`
+	// GuestTier is how the bot handles those non-whitelisted senders while
+	// GuestMode is on: "auto" (reply), "draft" (queue for approval), or "notify".
+	GuestTier string `json:"guestTier"`
 }
 
 // DefaultSettings returns sensible free-first defaults. CLI agents are enabled
@@ -91,6 +98,8 @@ func DefaultSettings() Settings {
 		},
 		MinConfidence: 0.7,
 		MinSTTConf:    0.5,
+		GuestMode:     false,
+		GuestTier:     string(store.TierAuto),
 	}
 }
 

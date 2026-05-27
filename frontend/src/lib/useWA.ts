@@ -8,6 +8,7 @@ export function useWA(): {
   status: WAStatus;
   qr: string;
   jid: string;
+  online: boolean;
   startPairing: () => void;
 } {
   const ctx = useContext(WAContext);

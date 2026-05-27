@@ -19,14 +19,18 @@ import { ChevronsUpDown, LogOut } from "lucide-react";
 type Props = {
   jid: string;
   paused: boolean;
+  online: boolean;
   onLogout: () => void;
 };
 
 /** NavUser is the sidebar footer: the account row opens a dropdown with Log out. */
-export function NavUser({ jid, paused, onLogout }: Props) {
+export function NavUser({ jid, paused, online, onLogout }: Props) {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
   const number = jid ? shortJid(jid) : "Unknown";
+  // Offline takes priority over paused for the status dot/label.
+  const dotColor = !online ? "bg-red-500" : paused ? "bg-yellow-500" : "bg-green-500";
+  const statusLabel = !online ? "Offline — reconnecting…" : paused ? "Paused" : "Connected";
 
   return (
     <SidebarMenu>
@@ -45,7 +49,8 @@ export function NavUser({ jid, paused, onLogout }: Props) {
               <span
                 className={cn(
                   "size-2.5 rounded-full",
-                  paused ? "bg-yellow-500" : "bg-green-500",
+                  dotColor,
+                  !online && "animate-pulse",
                 )}
               />
             </span>
@@ -53,8 +58,13 @@ export function NavUser({ jid, paused, onLogout }: Props) {
               <>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{number}</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {paused ? "Paused" : "Connected"}
+                  <span
+                    className={cn(
+                      "truncate text-xs",
+                      online ? "text-muted-foreground" : "text-red-500",
+                    )}
+                  >
+                    {statusLabel}
                   </span>
                 </div>
                 <ChevronsUpDown className="ml-auto size-4" />

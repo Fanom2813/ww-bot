@@ -8,6 +8,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
 	"wwbot/internal/core"
 	"wwbot/internal/store"
@@ -22,6 +23,7 @@ func init() {
 	// Register event types so the binding generator emits typed JS/TS APIs.
 	application.RegisterEvent[WAEvent]("wa")
 	application.RegisterEvent[Notice]("notice")
+	application.RegisterEvent[UnknownContact]("unknown")
 }
 
 func main() {
@@ -43,6 +45,9 @@ func main() {
 		log.Fatalf("init core: %v", err)
 	}
 
+	// Native OS notifications (new-number prompts). Wired to the core below.
+	ns := notifications.New()
+
 	app := application.New(application.Options{
 		Name:        "ww-bot",
 		Description: "WhatsApp AI reply assistant",
@@ -53,6 +58,7 @@ func main() {
 			application.NewService(&SettingsService{core: cr}),
 			application.NewService(&ActivityService{core: cr}),
 			application.NewService(&ControlService{core: cr}),
+			application.NewService(ns),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -78,10 +84,22 @@ func main() {
 	})
 
 	// Closing the window hides it (the bot keeps running in the tray) rather
-	// than quitting; Quit is explicit via the tray menu.
-	win.OnWindowEvent(events.Common.WindowClosing, func(e *application.WindowEvent) {
+	// than quitting; Quit is explicit via the tray menu. This MUST be a hook,
+	// not OnWindowEvent: only hooks run synchronously before the default close
+	// and have their Cancel() honored — listeners run after the close fires.
+	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		log.Println("[tray] window close intercepted — hiding to tray, bot keeps running")
 		win.Hide()
 		e.Cancel()
+	})
+
+	// Bridge the core's unknown-contact prompt to in-app + native notifications,
+	// and ask for notification permission once the run loop is up.
+	wireNotifications(cr, ns)
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		if ok, err := ns.RequestNotificationAuthorization(); err != nil || !ok {
+			log.Printf("notification authorization: granted=%v err=%v", ok, err)
+		}
 	})
 
 	setupTray(app, win, cr)

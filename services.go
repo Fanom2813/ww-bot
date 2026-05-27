@@ -11,9 +11,15 @@ import (
 // ContactsService manages per-contact profiles and trust tiers.
 type ContactsService struct{ core *core.Core }
 
-func (s *ContactsService) ServiceName() string             { return "Contacts" }
-func (s *ContactsService) List() ([]store.Contact, error)  { return s.core.ListContacts() }
-func (s *ContactsService) Upsert(c store.Contact) error    { return s.core.UpsertContact(c) }
+func (s *ContactsService) ServiceName() string            { return "Contacts" }
+func (s *ContactsService) List() ([]store.Contact, error) { return s.core.ListContacts() }
+func (s *ContactsService) Upsert(c store.Contact) error   { return s.core.UpsertContact(c) }
+
+// PendingNew lists unsaved numbers awaiting a save/ignore decision.
+func (s *ContactsService) PendingNew() []core.PendingContact { return s.core.PendingContacts() }
+
+// DismissNew drops a pending number without saving it.
+func (s *ContactsService) DismissNew(jid string) { s.core.DismissContact(jid) }
 
 // ApprovalsService manages the draft queue.
 type ApprovalsService struct{ core *core.Core }
@@ -47,3 +53,4 @@ func (s *ControlService) Resume()                    { s.core.Resume() }
 func (s *ControlService) Paused() bool               { return s.core.Paused() }
 func (s *ControlService) Status() string             { return s.core.Status() }
 func (s *ControlService) SetToday(text string) error { return s.core.SetToday(text) }
+func (s *ControlService) Today() string               { return s.core.Today() }
