@@ -47,11 +47,18 @@ jobs:
         if: matrix.target == 'darwin'
         run: wails3 task darwin:dmg:universal
 
+      - name: Prime frontend deps (Windows)
+        if: matrix.target == 'windows'
+        working-directory: frontend
+        run: bun install
+
+      - name: Prime go modules (Windows)
+        if: matrix.target == 'windows'
+        run: go mod tidy
+
       - name: Build Windows installer
         if: matrix.target == 'windows'
-        run: |
-          go mod tidy
-          wails3 task windows:package ARCH=${{ matrix.arch }}
+        run: wails3 task windows:package ARCH=${{ matrix.arch }}
 
       - name: Upload macOS artifact
         if: matrix.target == 'darwin'
