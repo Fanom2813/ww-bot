@@ -52,6 +52,7 @@ export function Settings() {
   const [saving, setSaving] = useState(false);
   const [providerDialog, setProviderDialog] = useState<ProviderSetting | null>(null);
   const [defaultPrompt, setDefaultPrompt] = useState("");
+  const [defaultProactive, setDefaultProactive] = useState("");
 
   const load = () =>
     SettingsService.Get()
@@ -60,6 +61,7 @@ export function Settings() {
   useEffect(() => {
     load();
     SettingsService.DefaultSystemPrompt().then(setDefaultPrompt).catch(() => {});
+    SettingsService.DefaultProactivePrompt().then(setDefaultProactive).catch(() => {});
   }, []);
 
   if (!s) {
@@ -218,6 +220,37 @@ export function Settings() {
           </Field>
         </Section>
 
+        {/* Proactive prompt */}
+        <Section
+          title="Proactive prompt"
+          description="Guides messages the bot starts itself (the “Reach out” button on a contact, and scheduled messages). It reads the history and current date to open naturally. Leave blank for the built-in default."
+        >
+          <Field>
+            <Textarea
+              rows={8}
+              className="font-mono text-xs"
+              placeholder={defaultProactive || "Leave blank to use the built-in default…"}
+              value={s.proactivePrompt}
+              onChange={(e) => set({ proactivePrompt: e.target.value })}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => set({ proactivePrompt: defaultProactive })}
+                disabled={!defaultProactive}
+              >
+                Load default to edit
+              </Button>
+              {s.proactivePrompt && (
+                <Button variant="ghost" size="sm" onClick={() => set({ proactivePrompt: "" })}>
+                  Reset to default
+                </Button>
+              )}
+            </div>
+          </Field>
+        </Section>
+
         {/* AI backends */}
         <Section
           title="AI backends"
@@ -336,7 +369,7 @@ export function Settings() {
         {/* Quiet hours */}
         <Section
           title="Quiet hours"
-          description="Pause outgoing replies during these hours so the bot never texts at odd times (proactive greetings can bypass). Hours are 0–23; e.g. 23 to 7 means 11pm–7am."
+          description="Pause outgoing replies during these hours so the bot never texts at odd times (scheduled & proactive messages can bypass). Hours are 0–23; e.g. 23 to 7 means 11pm–7am."
         >
           <Field orientation="horizontal">
             <FieldContent>

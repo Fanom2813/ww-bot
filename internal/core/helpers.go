@@ -27,6 +27,36 @@ func summarizeBurst(b inbox.Batch, contactName string) (incoming, senderName str
 	return strings.Join(lines, "\n"), senderName
 }
 
+// splitMessages splits a reply into separate WhatsApp messages on lines that
+// contain only "---" (the marker the model may use for a natural pause). Returns
+// the trimmed parts (capped), or the whole text as one message if no marker.
+func splitMessages(text string) []string {
+	var parts []string
+	var cur []string
+	flush := func() {
+		if s := strings.TrimSpace(strings.Join(cur, "\n")); s != "" {
+			parts = append(parts, s)
+		}
+		cur = nil
+	}
+	for _, ln := range strings.Split(text, "\n") {
+		if strings.TrimSpace(ln) == "---" {
+			flush()
+			continue
+		}
+		cur = append(cur, ln)
+	}
+	flush()
+	if len(parts) == 0 {
+		return []string{strings.TrimSpace(text)}
+	}
+	const maxParts = 5 // don't let the bot fire off a flurry of texts
+	if len(parts) > maxParts {
+		parts = parts[:maxParts]
+	}
+	return parts
+}
+
 // isGroup reports whether the batch is from a group chat.
 func isGroup(b inbox.Batch) bool {
 	for _, m := range b.Messages {

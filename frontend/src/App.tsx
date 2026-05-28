@@ -11,6 +11,7 @@ import { NewContactPrompt } from "@/components/dialogs";
 import { Dashboard } from "@/pages/Dashboard";
 import { Approvals } from "@/pages/Approvals";
 import { Contacts } from "@/pages/Contacts";
+import { Schedules } from "@/pages/Schedules";
 import { Activity } from "@/pages/Activity";
 import { Settings } from "@/pages/Settings";
 
@@ -33,6 +34,7 @@ function AppRoutes() {
               <Route index element={<Dashboard />} />
               <Route path="approvals" element={<Approvals />} />
               <Route path="contacts" element={<Contacts />} />
+              <Route path="schedules" element={<Schedules />} />
               <Route path="activity" element={<Activity />} />
               <Route path="settings" element={<Settings />} />
             </Route>

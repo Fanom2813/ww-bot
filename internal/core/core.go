@@ -109,8 +109,15 @@ func (c *Core) build(s Settings) {
 	reg := buildRegistry(hydrateKeys(s.Providers))
 	c.brn = brain.New(reg, brainConfig(s))
 	c.stt = buildSTT(s.STT)
+	c.gate = c.newGate(s)
+	c.debounce = inbox.New(inbox.Config{
+		Quiet: 30 * time.Second, MaxWait: 3 * time.Minute,
+	}, c.handleBatch)
+}
 
-	c.gate = safety.New(buildSafetyConfig(s.Safety),
+// newGate builds a safety gate from the current settings.
+func (c *Core) newGate(s Settings) *safety.Gate {
+	return safety.New(buildSafetyConfig(s.Safety),
 		func(ctx context.Context, to, text string) error {
 			if c.send == nil {
 				return errors.New("core: no sender attached")
@@ -130,10 +137,51 @@ func (c *Core) build(s Settings) {
 				_ = c.db.LogActivity(c.ctx, "system", j.ToJID, "send suppressed: "+reason)
 			},
 		})
+}
 
-	c.debounce = inbox.New(inbox.Config{
-		Quiet: 30 * time.Second, MaxWait: 3 * time.Minute,
-	}, c.handleBatch)
+// safetyGate returns the current gate (which may be swapped on settings reload).
+func (c *Core) safetyGate() *safety.Gate {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.gate
+}
+
+// applySettings rebuilds everything settings-derived and applies it LIVE — no
+// restart needed: the LLM registry/brain, STT, the safety gate (pacing/quiet
+// hours), and the scheduled proactive tasks are all re-created from s.
+func (c *Core) applySettings(s Settings) {
+	reg := buildRegistry(hydrateKeys(s.Providers))
+	newGate := c.newGate(s)
+
+	c.mu.Lock()
+	c.brn = brain.New(reg, brainConfig(s))
+	c.stt = buildSTT(s.STT)
+	oldGate := c.gate
+	wasPaused := oldGate != nil && oldGate.Paused()
+	c.gate = newGate
+	oldScheduler := c.scheduler
+	c.scheduler = schedule.New()
+	c.mu.Unlock()
+
+	// Swap the gate: start the new one (preserving pause state), stop the old.
+	if c.ctx != nil {
+		newGate.Start(c.ctx)
+	}
+	if wasPaused {
+		newGate.Pause()
+	}
+	if oldGate != nil {
+		oldGate.Stop()
+	}
+
+	// Re-register greetings on a fresh scheduler.
+	if oldScheduler != nil {
+		oldScheduler.Stop()
+	}
+	c.registerSchedules()
+	if c.ctx != nil {
+		c.scheduler.Start(c.ctx)
+	}
 }
 
 // AttachSender wires the function used to actually deliver messages.
@@ -146,7 +194,7 @@ func (c *Core) SetSelfJID(jid string) { c.selfJID = jid }
 func (c *Core) Start(ctx context.Context) {
 	c.ctx = ctx
 	c.gate.Start(ctx)
-	c.registerGreetings()
+	c.registerSchedules()
 	c.scheduler.Start(ctx)
 }
 
@@ -156,18 +204,28 @@ func (c *Core) Stop() {
 	c.scheduler.Stop()
 }
 
-func (c *Core) registerGreetings() {
+func (c *Core) registerSchedules() {
 	c.mu.RLock()
-	greetings := c.settings.Greetings
+	schedules := c.settings.Schedules
 	c.mu.RUnlock()
-	for _, g := range greetings {
-		if !g.Enabled || g.ToJID == "" {
+	for i, t := range schedules {
+		if !t.Enabled || strings.TrimSpace(t.Prompt) == "" || len(t.Contacts) == 0 {
 			continue
 		}
-		g := g
-		c.scheduler.Daily(fmt.Sprintf("greet-%s", g.ToJID), g.Hour, g.Min, func(ctx context.Context) {
-			if err := c.gate.Enqueue(safety.Job{ToJID: g.ToJID, Text: g.Text, BypassQuiet: true}); err == nil {
-				_ = c.db.LogActivity(ctx, "proactive", g.ToJID, preview(g.Text))
+		t := t
+		name := t.ID
+		if name == "" {
+			name = fmt.Sprintf("sched-%d", i)
+		}
+		c.scheduler.Daily(name, t.Hour, t.Min, func(ctx context.Context) {
+			log.Printf("[core] scheduled task %q firing → %d contact(s)", t.Label, len(t.Contacts))
+			for _, jid := range t.Contacts {
+				if strings.TrimSpace(jid) == "" {
+					continue
+				}
+				if err := c.StartProactive(jid, t.Prompt); err != nil {
+					log.Printf("[core] scheduled %q → %q failed: %v", t.Label, jid, err)
+				}
 			}
 		})
 	}
@@ -360,7 +418,7 @@ func (c *Core) handleBatch(b inbox.Batch) {
 
 	switch out.Action {
 	case brain.ActSend:
-		if err := c.gate.Enqueue(safety.Job{ToJID: b.ChatJID, Text: out.Text}); err != nil {
+		if err := c.safetyGate().Enqueue(safety.Job{ToJID: b.ChatJID, Parts: splitMessages(out.Text)}); err != nil {
 			// Paused/full — keep the reply as a draft so it isn't lost.
 			log.Printf("[core] send blocked chat=%q: %v → queued as draft", b.ChatJID, err)
 			c.queueDraft(b.ChatJID, in.SenderName, incoming, out.Text, "send blocked: "+err.Error(), out.Confidence)
@@ -546,7 +604,7 @@ func (c *Core) ApproveDraft(id int64, edited string) error {
 		return errors.New("core: cannot send an empty reply — type a message first")
 	}
 	// User explicitly approved -> bypass quiet hours.
-	if err := c.gate.Enqueue(safety.Job{ToJID: dr.ChatJID, Text: text, BypassQuiet: true}); err != nil {
+	if err := c.safetyGate().Enqueue(safety.Job{ToJID: dr.ChatJID, Parts: splitMessages(text), BypassQuiet: true}); err != nil {
 		return err
 	}
 	_ = c.db.SetDraftStatus(c.ctx, id, store.DraftSent, edited)
@@ -578,6 +636,60 @@ func (c *Core) SetToday(text string) error {
 // DefaultSystemPrompt returns the built-in persona used when none is set, so the
 // UI can show/restore it.
 func (c *Core) DefaultSystemPrompt() string { return brain.DefaultPersona }
+
+// DefaultProactivePrompt returns the built-in proactive prompt.
+func (c *Core) DefaultProactivePrompt() string { return brain.DefaultProactivePrompt }
+
+// Schedules returns the configured scheduled proactive tasks.
+func (c *Core) Schedules() []ScheduledTask {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.settings.Schedules
+}
+
+// SaveSchedules replaces the scheduled tasks and re-registers them live.
+func (c *Core) SaveSchedules(ts []ScheduledTask) error {
+	c.mu.RLock()
+	s := c.settings
+	c.mu.RUnlock()
+	s.Schedules = ts
+	return c.SaveSettings(s)
+}
+
+// StartProactive has the bot reach out to a contact: a free opener (topic == "")
+// or one about topic. It reads the chat's history/profile, asks the model for an
+// opener, and sends it (paced, may be multi-part). User-triggered, so it bypasses
+// quiet hours.
+func (c *Core) StartProactive(chatJID, topic string) error {
+	if strings.TrimSpace(chatJID) == "" {
+		return errors.New("core: proactive requires a contact")
+	}
+	contact, _ := c.db.GetContact(c.ctx, chatJID)
+	daily, _ := c.db.GetDailyContext(c.ctx, time.Now().Format("2006-01-02"))
+	in := brain.Input{
+		SenderName:   contact.Name,
+		ContactName:  contact.Name,
+		Language:     contact.Language,
+		Style:        contact.Style,
+		Summary:      contact.Summary,
+		DailyContext: daily,
+		Window:       c.recentTurns(chatJID),
+	}
+	text, err := c.brn.Initiate(c.ctx, in, topic)
+	if err != nil {
+		log.Printf("[core] proactive error chat=%q: %v", chatJID, err)
+		return err
+	}
+	if strings.TrimSpace(text) == "" {
+		return errors.New("core: model returned an empty proactive message")
+	}
+	log.Printf("[core] proactive chat=%q topic=%q -> %q", chatJID, topic, preview(text))
+	if err := c.safetyGate().Enqueue(safety.Job{ToJID: chatJID, Parts: splitMessages(text), BypassQuiet: true}); err != nil {
+		return err
+	}
+	_ = c.db.LogActivity(c.ctx, "proactive", chatJID, preview(text))
+	return nil
+}
 
 // Today returns today's saved context (empty if none).
 func (c *Core) Today() string {
@@ -633,24 +745,21 @@ func (c *Core) SaveSettings(s Settings) error {
 	c.mu.Lock()
 	c.settings = s
 	c.mu.Unlock()
-	// Rebuild registry/stt/brain; the running gate keeps its config until restart.
-	reg := buildRegistry(hydrateKeys(s.Providers))
-	c.mu.Lock()
-	c.brn = brain.New(reg, brainConfig(s))
-	c.stt = buildSTT(s.STT)
-	c.mu.Unlock()
+	// Apply everything live — providers/model, persona, STT, safety pacing,
+	// quiet hours, and greetings all take effect immediately (no restart).
+	c.applySettings(s)
 	return nil
 }
 
 // Pause / Resume / Paused proxy the gate kill-switch.
-func (c *Core) Pause()       { c.gate.Pause() }
-func (c *Core) Resume()      { c.gate.Resume() }
-func (c *Core) Paused() bool { return c.gate.Paused() }
+func (c *Core) Pause()       { c.safetyGate().Pause() }
+func (c *Core) Resume()      { c.safetyGate().Resume() }
+func (c *Core) Paused() bool { return c.safetyGate().Paused() }
 
 // Status returns a short human-readable status line.
 func (c *Core) Status() string {
 	state := "active"
-	if c.gate.Paused() {
+	if c.safetyGate().Paused() {
 		state = "paused"
 	}
 	pending, _ := c.db.ListDrafts(c.ctx, store.DraftPending)

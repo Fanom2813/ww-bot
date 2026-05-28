@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { ListFilter, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, ListFilter, Search } from "lucide-react";
 
 export type Column<T> = {
   /** Stable identifier for the column. */
@@ -58,6 +58,8 @@ type DataTableProps<T> = {
   /** Shown when there are no rows. */
   empty?: ReactNode;
   loading?: boolean;
+  /** Rows per page. 0 disables pagination. Defaults to 20. */
+  pageSize?: number;
 };
 
 /**
@@ -73,9 +75,26 @@ export function DataTable<T>({
   filter,
   empty,
   loading,
+  pageSize = 20,
 }: DataTableProps<T>) {
   const activeFilter =
     filter && (filter.options.find((o) => o.value === filter.value)?.label ?? filter.label ?? "Filter");
+
+  const [page, setPage] = useState(0);
+  const paged = pageSize > 0;
+  const total = rows.length;
+  const pageCount = paged ? Math.max(1, Math.ceil(total / pageSize)) : 1;
+
+  // Reset to the first page whenever the row set changes (search/filter/reload),
+  // and clamp if the current page falls out of range.
+  useEffect(() => {
+    setPage((p) => (p > pageCount - 1 ? 0 : p));
+  }, [total, pageCount]);
+
+  const visible = paged ? rows.slice(page * pageSize, page * pageSize + pageSize) : rows;
+  const showPager = paged && total > pageSize;
+  const from = total === 0 ? 0 : page * pageSize + 1;
+  const to = Math.min(total, page * pageSize + pageSize);
 
   return (
     <div>
@@ -112,19 +131,18 @@ export function DataTable<T>({
         </div>
       )}
 
-      <div className="rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {columns.map((col) => (
-                <TableHead key={col.id} className={col.headClassName}>
-                  {col.header}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
+      <Table containerClassName="max-h-[70vh] rounded-lg border">
+        <TableHeader className="sticky top-0 z-10 bg-background">
+          <TableRow>
+            {columns.map((col) => (
+              <TableHead key={col.id} className={col.headClassName}>
+                {col.header}
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
           <TableBody>
-            {rows.map((row) => (
+            {visible.map((row) => (
               <TableRow
                 key={rowKey(row)}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -137,7 +155,7 @@ export function DataTable<T>({
                 ))}
               </TableRow>
             ))}
-            {rows.length === 0 && (
+            {total === 0 && (
               <TableRow className="hover:bg-transparent">
                 <TableCell
                   colSpan={columns.length}
@@ -149,7 +167,35 @@ export function DataTable<T>({
             )}
           </TableBody>
         </Table>
-      </div>
+
+      {showPager && (
+        <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground">
+          <span className="tabular-nums">
+            {from}–{to} of {total}
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="tabular-nums">
+              Page {page + 1} / {pageCount}
+            </span>
+            <Button
+              size="icon-sm"
+              variant="outline"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="outline"
+              disabled={page >= pageCount - 1}
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            >
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

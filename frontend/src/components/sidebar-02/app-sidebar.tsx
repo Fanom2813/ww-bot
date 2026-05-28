@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   Activity as ActivityIcon,
+  CalendarClock,
   Inbox,
   LayoutDashboard,
   Settings as SettingsIcon,
@@ -22,6 +23,7 @@ const dashboardRoutes: Route[] = [
   { id: "dashboard", title: "Dashboard", icon: <LayoutDashboard className="size-4" />, to: "/", end: true },
   { id: "approvals", title: "Approvals", icon: <Inbox className="size-4" />, to: "/approvals" },
   { id: "contacts", title: "Contacts", icon: <Users className="size-4" />, to: "/contacts" },
+  { id: "schedules", title: "Schedules", icon: <CalendarClock className="size-4" />, to: "/schedules" },
   { id: "activity", title: "Activity", icon: <ActivityIcon className="size-4" />, to: "/activity" },
   { id: "settings", title: "Settings", icon: <SettingsIcon className="size-4" />, to: "/settings" },
 ];

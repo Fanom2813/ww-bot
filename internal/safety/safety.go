@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,10 +60,13 @@ func (c *Config) withDefaults() {
 	}
 }
 
-// Job is a queued outbound message.
+// Job is a queued outbound message. If Parts has more than one entry, they are
+// sent as separate WhatsApp messages with short natural pauses between them (the
+// bot "texting in a few bursts"); otherwise Text is sent as a single message.
 type Job struct {
 	ToJID       string
 	Text        string
+	Parts       []string
 	BypassQuiet bool // proactive duas / user-approved sends may bypass quiet hours
 }
 
@@ -175,25 +179,43 @@ func (g *Gate) process(j Job) {
 		return
 	}
 
-	// Pacing: respect per-contact cooldown and global min interval.
+	parts := j.Parts
+	if len(parts) == 0 {
+		parts = []string{j.Text}
+	}
+
+	// Pacing once for the whole turn: per-contact cooldown + global min interval.
 	if w := g.computeWait(j.ToJID, now); w > 0 {
 		g.sleep(w)
 	}
-	// Human reaction delay (randomized).
-	g.sleep(g.reactionDelay())
-	// Typing simulation.
-	if g.typing != nil {
-		g.typing(g.ctx, j.ToJID, g.typingDuration(j.Text))
-	}
 
-	if err := g.send(g.ctx, j.ToJID, j.Text); err != nil {
-		g.drop(j, "send error: "+err.Error())
-		return
+	for i, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		if i == 0 {
+			g.sleep(g.reactionDelay()) // human reaction delay before the first message
+		} else {
+			g.sleep(g.interPartPause()) // short natural gap before each follow-up
+		}
+		if g.typing != nil {
+			g.typing(g.ctx, j.ToJID, g.typingDuration(part))
+		}
+		if err := g.send(g.ctx, j.ToJID, part); err != nil {
+			g.drop(Job{ToJID: j.ToJID, Text: part}, "send error: "+err.Error())
+			return
+		}
+		if g.onSent != nil {
+			g.onSent(j.ToJID, part)
+		}
 	}
 	g.recordSend(j.ToJID)
-	if g.onSent != nil {
-		g.onSent(j.ToJID, j.Text)
-	}
+}
+
+// interPartPause is a short, randomized gap between consecutive messages in the
+// same reply (~0.8–2s), so a split reply reads like natural back-to-back texts.
+func (g *Gate) interPartPause() time.Duration {
+	return 800*time.Millisecond + time.Duration(rand.Int64N(int64(1200*time.Millisecond)))
 }
 
 func (g *Gate) drop(j Job, reason string) {

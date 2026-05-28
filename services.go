@@ -21,6 +21,12 @@ func (s *ContactsService) PendingNew() []core.PendingContact { return s.core.Pen
 // DismissNew drops a pending number without saving it.
 func (s *ContactsService) DismissNew(jid string) { s.core.DismissContact(jid) }
 
+// Proactive has the bot reach out to a contact — a free opener (topic == "") or
+// one about the given topic.
+func (s *ContactsService) Proactive(jid, topic string) error {
+	return s.core.StartProactive(jid, topic)
+}
+
 // ApprovalsService manages the draft queue.
 type ApprovalsService struct{ core *core.Core }
 
@@ -41,6 +47,16 @@ func (s *SettingsService) Save(st core.Settings) error { return s.core.SaveSetti
 // DefaultSystemPrompt returns the built-in persona, for the Settings UI to show
 // or restore.
 func (s *SettingsService) DefaultSystemPrompt() string { return s.core.DefaultSystemPrompt() }
+
+// DefaultProactivePrompt returns the built-in proactive prompt.
+func (s *SettingsService) DefaultProactivePrompt() string { return s.core.DefaultProactivePrompt() }
+
+// ScheduleService manages recurring proactive tasks (scheduled "crons").
+type ScheduleService struct{ core *core.Core }
+
+func (s *ScheduleService) ServiceName() string             { return "Schedule" }
+func (s *ScheduleService) List() []core.ScheduledTask      { return s.core.Schedules() }
+func (s *ScheduleService) Save(ts []core.ScheduledTask) error { return s.core.SaveSchedules(ts) }
 
 // ActivityService exposes the audit log.
 type ActivityService struct{ core *core.Core }

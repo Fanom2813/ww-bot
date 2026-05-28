@@ -58,6 +58,7 @@ func main() {
 			application.NewService(&SettingsService{core: cr}),
 			application.NewService(&ActivityService{core: cr}),
 			application.NewService(&ControlService{core: cr}),
+			application.NewService(&ScheduleService{core: cr}),
 			application.NewService(ns),
 		},
 		Assets: application.AssetOptions{

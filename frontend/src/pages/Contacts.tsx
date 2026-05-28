@@ -4,9 +4,26 @@ import { Page } from "@/components/Page";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/DataTable";
-import { ContactDialog } from "@/components/dialogs";
-import { Contact, ContactsService, WhatsAppService } from "@/lib/api";
-import { Plus } from "lucide-react";
+import { ContactDialog, ProactiveDialog, ScheduleDialog } from "@/components/dialogs";
+import {
+  Contact,
+  ContactsService,
+  ScheduledTask,
+  ScheduleService,
+  WhatsAppService,
+} from "@/lib/api";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { CalendarClock, MessageCirclePlus, MoreHorizontal, Pencil, Plus, UserPlus } from "lucide-react";
+
+function newId(): string {
+  return typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `sch-${Date.now()}`;
+}
 
 type Row = { jid: string; name: string; managed: Contact | null };
 
@@ -36,6 +53,8 @@ export function Contacts() {
   const [filter, setFilter] = useState<"all" | "added" | "not">("all");
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [proactive, setProactive] = useState<{ jid: string; name: string } | null>(null);
+  const [scheduleTask, setScheduleTask] = useState<ScheduledTask | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -89,6 +108,30 @@ export function Contacts() {
       jidEditable: false,
     });
 
+  const openSchedule = (r: Row) =>
+    setScheduleTask(
+      new ScheduledTask({
+        id: newId(),
+        label: `Message ${r.name}`,
+        hour: 8,
+        min: 0,
+        contacts: [r.jid],
+        prompt: "",
+        enabled: true,
+      } as ScheduledTask),
+    );
+
+  // saveSchedule appends the new task to the existing list and persists it.
+  const saveSchedule = (t: ScheduledTask) => {
+    setScheduleTask(null);
+    ScheduleService.List()
+      .then((existing) => ScheduleService.Save([...(existing ?? []), t]))
+      .then(() => toast.success("Schedule created", { description: "Manage it on the Schedules page." }))
+      .catch((e) => toast.error("Couldn't schedule", { description: String(e) }));
+  };
+
+  const pickerContacts = useMemo(() => rows.map((r) => ({ jid: r.jid, name: r.name })), [rows]);
+
   const managedCount = managed.length;
 
   const columns = useMemo<Column<Row>[]>(
@@ -118,9 +161,34 @@ export function Contacts() {
         headClassName: "text-right",
         className: "text-right",
         cell: (r) => (
-          <Button size="sm" variant={r.managed ? "outline" : "default"} onClick={() => openRow(r)}>
-            {r.managed ? "Edit" : "Add"}
-          </Button>
+          <div className="flex justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" />}>
+                <MoreHorizontal className="size-4" />
+                <span className="sr-only">Actions</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuItem onClick={() => setProactive({ jid: r.jid, name: r.name })}>
+                  <MessageCirclePlus className="size-4" /> Reach out now
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openSchedule(r)}>
+                  <CalendarClock className="size-4" /> Schedule…
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => openRow(r)}>
+                  {r.managed ? (
+                    <>
+                      <Pencil className="size-4" /> Edit
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="size-4" /> Add
+                    </>
+                  )}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         ),
       },
     ],
@@ -165,6 +233,15 @@ export function Contacts() {
         jidEditable={dialog?.jidEditable ?? false}
         onClose={() => setDialog(null)}
         onSaved={load}
+      />
+
+      <ProactiveDialog target={proactive} onClose={() => setProactive(null)} />
+
+      <ScheduleDialog
+        task={scheduleTask}
+        contacts={pickerContacts}
+        onClose={() => setScheduleTask(null)}
+        onSave={saveSchedule}
       />
     </Page>
   );

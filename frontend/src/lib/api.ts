@@ -5,6 +5,7 @@ export {
   ApprovalsService,
   ContactsService,
   ControlService,
+  ScheduleService,
   SettingsService,
   WhatsAppService,
 } from "../../bindings/wwbot";
@@ -16,5 +17,6 @@ export {
   ProviderSetting,
   STTSetting,
   SafetySetting,
+  ScheduledTask,
   PendingContact,
 } from "../../bindings/wwbot/internal/core/models";

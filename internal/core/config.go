@@ -63,13 +63,17 @@ type SafetySetting struct {
 	QuietHoursOff bool `json:"quietHoursOff,omitempty"`
 }
 
-// GreetingSetting is a scheduled proactive message.
-type GreetingSetting struct {
-	Hour    int    `json:"hour"`
-	Min     int    `json:"min"`
-	ToJID   string `json:"toJid"`
-	Text    string `json:"text"`
-	Enabled bool   `json:"enabled"`
+// ScheduledTask is a recurring proactive job (a "cron"): every day at Hour:Min
+// the bot reaches out to each contact in Contacts following Prompt. Not limited
+// to greetings — Prompt is any instruction (morning dua, evening check-in, …).
+type ScheduledTask struct {
+	ID       string   `json:"id"`
+	Label    string   `json:"label"`
+	Hour     int      `json:"hour"`
+	Min      int      `json:"min"`
+	Contacts []string `json:"contacts"`
+	Prompt   string   `json:"prompt"`
+	Enabled  bool     `json:"enabled"`
 }
 
 // Settings is the full app configuration, stored as one JSON blob.
@@ -77,7 +81,7 @@ type Settings struct {
 	Providers     []ProviderSetting `json:"providers"`
 	STT           STTSetting        `json:"stt"`
 	Safety        SafetySetting     `json:"safety"`
-	Greetings     []GreetingSetting `json:"greetings"`
+	Schedules     []ScheduledTask   `json:"schedules"`
 	MinConfidence float64           `json:"minConfidence"`
 	MinSTTConf    float64           `json:"minSttConfidence"`
 	// GuestMode, when true, lets the bot reply to 1-1 messages from people who
@@ -90,6 +94,9 @@ type Settings struct {
 	// SystemPrompt is the user-editable persona/system prompt. Empty means use
 	// the built-in default (brain.DefaultPersona).
 	SystemPrompt string `json:"systemPrompt"`
+	// ProactivePrompt is the user-editable prompt for bot-initiated messages.
+	// Empty means use the built-in default (brain.DefaultProactivePrompt).
+	ProactivePrompt string `json:"proactivePrompt"`
 }
 
 // DefaultSettings returns sensible defaults. Only the auto-discovered CLI agents
@@ -243,5 +250,5 @@ func buildSafetyConfig(s SafetySetting) safety.Config {
 }
 
 func brainConfig(s Settings) brain.Config {
-	return brain.Config{MinConfidence: s.MinConfidence, Persona: s.SystemPrompt}
+	return brain.Config{MinConfidence: s.MinConfidence, Persona: s.SystemPrompt, Proactive: s.ProactivePrompt}
 }

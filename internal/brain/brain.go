@@ -73,7 +73,17 @@ type Outcome struct {
 type Config struct {
 	MinConfidence float64 // below this, replies are escalated to a draft (default 0.7)
 	Persona       string  // user-editable system prompt; falls back to DefaultPersona
+	Proactive     string  // user-editable proactive prompt; falls back to DefaultProactivePrompt
 }
+
+// DefaultProactivePrompt guides bot-initiated (proactive) messages. Editable in
+// settings; the persona still applies on top.
+const DefaultProactivePrompt = `You are PROACTIVELY starting or continuing this WhatsApp conversation right now — the owner asked you to reach out; the other person did NOT just message you.
+
+- Look at the conversation history and the current date/time.
+- If you've never talked, open with a short, natural greeting.
+- If it's been a while, pick up naturally — you may lightly acknowledge the gap, but don't make it weird or overly about dates.
+- Keep it casual, warm, and human, in the owner's voice — a real opener, not a generic "Hello, how are you?".`
 
 // DefaultPersona is the built-in writing/behavior guidance. It governs HOW the
 // bot writes (natural, in the user's voice, plain WhatsApp text). The strict
@@ -190,11 +200,9 @@ func (b *Brain) Decide(ctx context.Context, in Input) (Outcome, error) {
 	return out, nil
 }
 
-// ask builds the prompt, calls the model, and parses the JSON decision.
-func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
-	// Defense-in-depth: scrub credential-looking tokens from everything that
-	// reaches the model — the incoming burst, the context window, and the
-	// rolling memory. in is a value copy, so this never affects callers/storage.
+// redactInput scrubs credential-looking tokens from everything that reaches the
+// model (incoming, window, memory, daily plan). in is a value copy.
+func redactInput(in Input) Input {
 	in.Incoming = Redact(in.Incoming)
 	in.Summary = Redact(in.Summary)
 	in.DailyContext = Redact(in.DailyContext)
@@ -206,6 +214,42 @@ func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
 		}
 		in.Window = w
 	}
+	return in
+}
+
+// Initiate generates a proactive opener for a contact — either a free opener
+// (topic == "") or one about the given topic. Returns the message text (which
+// may contain --- split markers); the caller paces/sends it.
+func (b *Brain) Initiate(ctx context.Context, in Input, topic string) (string, error) {
+	in = redactInput(in)
+	persona := strings.TrimSpace(b.cfg.Persona)
+	if persona == "" {
+		persona = DefaultPersona
+	}
+	proactive := strings.TrimSpace(b.cfg.Proactive)
+	if proactive == "" {
+		proactive = DefaultProactivePrompt
+	}
+	system := buildProactiveSystem(in, persona, proactive, topic)
+	user := buildProactiveUser(in, topic)
+	raw, _, err := b.reg.Complete(ctx, llm.Request{
+		System:      system,
+		Messages:    []llm.Message{{Role: llm.User, Content: user}},
+		Temperature: 0.6,
+		MaxTokens:   400,
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(raw), nil
+}
+
+// ask builds the prompt, calls the model, and parses the JSON decision.
+func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
+	// Defense-in-depth: scrub credential-looking tokens from everything that
+	// reaches the model — the incoming burst, the context window, and the
+	// rolling memory. in is a value copy, so this never affects callers/storage.
+	in = redactInput(in)
 
 	persona := strings.TrimSpace(b.cfg.Persona)
 	if persona == "" {
