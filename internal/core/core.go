@@ -61,6 +61,9 @@ type PendingContact struct {
 // SendFunc delivers a message to a JID (wraps wa.Client.SendText).
 type SendFunc func(ctx context.Context, toJID, text string) error
 
+// TypingFunc shows or clears the "typing…" indicator in a chat.
+type TypingFunc func(ctx context.Context, chatJID string, composing bool) error
+
 // Inbound is a normalized incoming message handed to the core by the app.
 type Inbound struct {
 	ChatJID    string
@@ -99,6 +102,7 @@ type Core struct {
 	msgKey         []byte                    // AES key for encrypting stored message history
 
 	send    SendFunc
+	typing  TypingFunc
 	selfJID string
 	ctx     context.Context
 }
@@ -292,6 +296,9 @@ func (c *Core) applySettings(s Settings) {
 
 // AttachSender wires the function used to actually deliver messages.
 func (c *Core) AttachSender(send SendFunc) { c.send = send }
+
+// AttachTyping wires the function used to show/clear the typing indicator.
+func (c *Core) AttachTyping(fn TypingFunc) { c.typing = fn }
 
 // SetSelfJID records the user's own JID (to recognize self-chat commands).
 func (c *Core) SetSelfJID(jid string) { c.selfJID = jid }
@@ -530,6 +537,10 @@ func (c *Core) handleBatch(b inbox.Batch) {
 	}
 
 	dbg.Printf("[core] deciding chat=%q tier=%s incoming=%q", b.ChatJID, tier, preview(incoming))
+	if c.typing != nil {
+		_ = c.typing(ctx, b.ChatJID, true)
+		defer func() { _ = c.typing(ctx, b.ChatJID, false) }()
+	}
 	out, err := c.brn.Decide(ctx, in)
 	if err != nil {
 		log.Printf("[core] brain error chat=%q: %v (no provider enabled?)", b.ChatJID, err)
@@ -853,6 +864,10 @@ func (c *Core) StartProactive(chatJID, topic string) error {
 		Summary:      contact.Summary,
 		DailyContext: daily,
 		Window:       c.recentTurns(chatJID),
+	}
+	if c.typing != nil {
+		_ = c.typing(c.ctx, chatJID, true)
+		defer func() { _ = c.typing(c.ctx, chatJID, false) }()
 	}
 	text, err := c.brn.Initiate(c.ctx, in, topic)
 	if err != nil {

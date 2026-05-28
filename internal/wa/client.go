@@ -133,6 +133,20 @@ func (c *Client) Start(ctx context.Context) error {
 	return nil
 }
 
+// SetTyping sends a chat-presence update to show or clear the "typing…"
+// indicator in a chat. composing=true shows typing; false clears it.
+func (c *Client) SetTyping(ctx context.Context, chatJID string, composing bool) error {
+	jid, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("wa: parse jid %q: %w", chatJID, err)
+	}
+	state := types.ChatPresencePaused
+	if composing {
+		state = types.ChatPresenceComposing
+	}
+	return c.wm.SendChatPresence(ctx, jid, state, types.ChatPresenceMediaText)
+}
+
 // SendText sends a plain text message to the given JID string (e.g.
 // "12345@s.whatsapp.net"). In the full app, every outbound message funnels
 // through the safety gate before reaching this method.

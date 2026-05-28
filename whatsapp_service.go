@@ -44,6 +44,7 @@ func (s *WhatsAppService) ServiceStartup(ctx context.Context, _ application.Serv
 
 	// Outbound sends flow through the core's safety gate into the wa client.
 	s.core.AttachSender(client.SendText)
+	s.core.AttachTyping(client.SetTyping)
 	go s.bridge(client.Events())
 	s.core.Start(ctx)
 
