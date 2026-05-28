@@ -62,15 +62,15 @@ jobs:
         if: matrix.target == 'darwin'
         uses: actions/upload-artifact@v4
         with:
-          name: WW-Bot-macOS
-          path: bin/ww-bot.dmg
+          name: WWAssist-macOS
+          path: bin/WWAssist.dmg
 
       - name: Upload Windows artifact
         if: matrix.target == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: WW-Bot-Windows-${{ matrix.arch }}
-          path: bin/ww-bot-${{ matrix.arch }}-installer.exe
+          name: WWAssist-Windows-${{ matrix.arch }}
+          path: bin/WWAssist-${{ matrix.arch }}-installer.exe
 
   publish:
     needs: release
@@ -84,6 +84,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/WW-Bot-macOS/ww-bot.dmg
-            artifacts/WW-Bot-Windows-amd64/ww-bot-amd64-installer.exe
+            artifacts/WWAssist-macOS/WWAssist.dmg
+            artifacts/WWAssist-Windows-amd64/WWAssist-amd64-installer.exe
           generate_release_notes: true

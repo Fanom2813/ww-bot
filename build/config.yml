@@ -5,12 +5,12 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "WW Bot" # The name of the company
-  productName: "WW Bot" # The name of the application
-  productIdentifier: "com.wwbot.app" # The unique product identifier
+  companyName: "WWAssist" # The name of the company
+  productName: "WWAssist" # The name of the application
+  productIdentifier: "io.github.fanom2813.wwassist" # The unique product identifier
   description: "WhatsApp AI reply assistant" # The application description
-  copyright: "© 2025 WW Bot" # Copyright text
-  comments: "AI-powered WhatsApp auto-reply bot with safety rails" # Comments
+  copyright: "© 2025 WWAssist" # Copyright text
+  comments: "AI-powered WhatsApp reply assistant" # Comments
   version: "0.0.4" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension

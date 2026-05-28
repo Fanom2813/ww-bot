@@ -5,13 +5,13 @@
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME "ww-bot"
+    !define INFO_PROJECTNAME "WWAssist"
 !endif
 !ifndef INFO_COMPANYNAME
-    !define INFO_COMPANYNAME "WW Bot"
+    !define INFO_COMPANYNAME "WWAssist"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "WW Bot"
+    !define INFO_PRODUCTNAME "WWAssist"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.0.1"
