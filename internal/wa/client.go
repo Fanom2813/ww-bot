@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // registers the "sqlite3" database/sql driver
+	_ "modernc.org/sqlite" // pure-Go SQLite driver (no CGO needed)
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"

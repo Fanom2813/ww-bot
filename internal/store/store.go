@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // ErrNotFound is returned when a lookup finds no row.

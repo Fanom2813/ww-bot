@@ -15,8 +15,13 @@ jobs:
         include:
           - runner: macos-latest
             target: darwin
+            arch: universal
           - runner: windows-latest
             target: windows
+            arch: amd64
+          - runner: windows-latest
+            target: windows
+            arch: 386
 
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +51,7 @@ jobs:
         if: matrix.target == 'windows'
         run: |
           go mod tidy
-          wails3 task windows:package
+          wails3 task windows:package ARCH=${{ matrix.arch }}
 
       - name: Upload macOS artifact
         if: matrix.target == 'darwin'
@@ -59,8 +64,8 @@ jobs:
         if: matrix.target == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: WW-Bot-Windows
-          path: bin/ww-bot-amd64-installer.exe
+          name: WW-Bot-Windows-${{ matrix.arch }}
+          path: bin/ww-bot-${{ matrix.arch }}-installer.exe
 
   publish:
     needs: release
@@ -75,5 +80,6 @@ jobs:
         with:
           files: |
             artifacts/WW-Bot-macOS/ww-bot.dmg
-            artifacts/WW-Bot-Windows/ww-bot-amd64-installer.exe
+            artifacts/WW-Bot-Windows-amd64/ww-bot-amd64-installer.exe
+            artifacts/WW-Bot-Windows-386/ww-bot-386-installer.exe
           generate_release_notes: true
