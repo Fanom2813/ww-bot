@@ -24,7 +24,7 @@ type DB struct{ sql *sql.DB }
 // Open opens (and migrates) the data store at the given SQLite DSN, e.g.
 // "file:.../data.db?_foreign_keys=on&_busy_timeout=5000&_journal_mode=WAL".
 func Open(ctx context.Context, dsn string) (*DB, error) {
-	sqldb, err := sql.Open("sqlite3", dsn)
+	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open: %w", err)
 	}

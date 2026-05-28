@@ -69,7 +69,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		level = "WARN"
 	}
 
-	container, err := sqlstore.New(ctx, "sqlite3", cfg.SessionDSN, waLog.Stdout("wa-db", level, true))
+	container, err := sqlstore.New(ctx, "sqlite", cfg.SessionDSN, waLog.Stdout("wa-db", level, true))
 	if err != nil {
 		return nil, fmt.Errorf("wa: open session store: %w", err)
 	}
