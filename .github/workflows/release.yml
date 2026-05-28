@@ -44,7 +44,9 @@ jobs:
 
       - name: Build Windows installer
         if: matrix.target == 'windows'
-        run: wails3 task windows:package
+        run: |
+          go mod tidy
+          wails3 task windows:package
 
       - name: Upload macOS artifact
         if: matrix.target == 'darwin'
