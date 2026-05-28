@@ -24,7 +24,7 @@ export function ConnectScreen() {
     <div className="flex min-h-screen items-center justify-center bg-background p-8 text-foreground">
       <Card className="w-full max-w-md">
         <CardHeader className="items-center text-center">
-          <img src="/logo.png" alt="WW Bot" className="mx-auto mb-2 h-12 w-12 rounded-xl" />
+          <img src="/logo.png" alt="WW Bot" className="mx-auto mb-2 size-12 rounded-xl" />
           <CardTitle>Link your WhatsApp</CardTitle>
           <CardDescription>
             Connect the bot to your WhatsApp account to get started.
@@ -46,13 +46,13 @@ export function ConnectScreen() {
 
           {generating && (
             <div className="flex items-center gap-2 py-10 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Generating QR code…
+              <Loader2 className="size-4 animate-spin" /> Generating QR code…
             </div>
           )}
 
           {status === "unpaired" && (
             <Button onClick={startPairing} className="gap-2">
-              <Smartphone className="h-4 w-4" /> Show QR code
+              <Smartphone className="size-4" /> Show QR code
             </Button>
           )}
         </CardContent>

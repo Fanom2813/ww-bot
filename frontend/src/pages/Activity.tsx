@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Events } from "@wailsio/runtime";
 import { Page } from "@/components/Page";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/DataTable";
 import { ActivityService, Activity as ActivityItem } from "@/lib/api";
+import { ActivityDetailDialog } from "@/components/dialogs";
 import {
   MessageSquare,
   Phone,
@@ -57,12 +59,20 @@ export function Activity() {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<ActivityItem | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     ActivityService.List(200)
       .then((a) => setItems(a ?? []))
       .catch(() => {});
   }, []);
+
+  // Initial load + live append on the backend "activity" event.
+  useEffect(() => {
+    load();
+    const off = Events.On("activity", () => load());
+    return () => off();
+  }, [load]);
 
   const counts = useMemo(() => {
     const m: Record<string, number> = {};
@@ -73,10 +83,9 @@ export function Activity() {
   const filterOptions = useMemo(
     () => [
       { value: "all", label: "All types" },
-      ...KINDS.filter((k) => counts[k]).map((k) => ({
-        value: k,
-        label: `${KIND_META[k].label} (${counts[k]})`,
-      })),
+      ...KINDS.flatMap((k) =>
+        counts[k] ? [{ value: k, label: `${KIND_META[k].label} (${counts[k]})` }] : []
+      ),
     ],
     [counts],
   );
@@ -135,10 +144,10 @@ export function Activity() {
 
   if (items.length === 0) {
     return (
-      <Page title="Activity" description="What the bot did — replies, drafts, calls, and flags.">
+      <Page fill title="Activity" description="What the bot did: replies, drafts, calls, and flags.">
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-            <Zap className="h-6 w-6 text-muted-foreground" />
+          <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-muted">
+            <Zap className="size-6 text-muted-foreground" />
           </div>
           <p className="font-medium">No activity yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -150,15 +159,18 @@ export function Activity() {
   }
 
   return (
-    <Page title="Activity" description="What the bot did — replies, drafts, calls, and flags.">
+    <Page fill title="Activity" description="What the bot did: replies, drafts, calls, and flags.">
       <DataTable
         columns={columns}
         rows={rows}
         rowKey={(a) => String(a.id)}
+        onRowClick={(a) => setSelected(a)}
         search={{ value: search, onChange: setSearch, placeholder: "Search activity…" }}
         filter={{ value: filter, onChange: setFilter, label: "All types", options: filterOptions }}
         empty="No matching activity."
       />
+
+      <ActivityDetailDialog activity={selected} onClose={() => setSelected(null)} />
     </Page>
   );
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"wwbot/internal/dbg"
 	"wwbot/internal/llm"
 )
 
@@ -268,6 +269,7 @@ func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
 	if err != nil {
 		return decision{}, err
 	}
+	dbg.Printf("[brain] answered by provider=%q (%d chars raw)", provider, len(raw))
 	dec, err := parseDecision(raw)
 	if err != nil {
 		snippet := raw

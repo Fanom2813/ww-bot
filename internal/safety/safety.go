@@ -72,16 +72,16 @@ type Job struct {
 
 // Gate serializes and paces outbound messages.
 type Gate struct {
-	cfg     Config
-	send    SendFunc
-	typing  TypingFunc
-	onSent  func(toJID, text string)
-	onDrop  func(j Job, reason string)
-	jobs    chan Job
-	quit    chan struct{}
-	wg      sync.WaitGroup
-	paused  atomic.Bool
-	ctx     context.Context
+	cfg    Config
+	send   SendFunc
+	typing TypingFunc
+	onSent func(toJID, text string)
+	onDrop func(j Job, reason string)
+	jobs   chan Job
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	paused atomic.Bool
+	ctx    context.Context
 
 	mu            sync.Mutex
 	lastSend      time.Time
@@ -96,9 +96,9 @@ type Gate struct {
 
 // Options bundles optional hooks.
 type Options struct {
-	Typing  TypingFunc
-	OnSent  func(toJID, text string) // audit hook on successful send
-	OnDrop  func(j Job, reason string)
+	Typing TypingFunc
+	OnSent func(toJID, text string) // audit hook on successful send
+	OnDrop func(j Job, reason string)
 }
 
 // New constructs a Gate. Call Start to launch the worker.

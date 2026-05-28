@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"os/exec"
 	"strings"
+
+	"wwbot/internal/dbg"
 )
 
 // CLIAgent drives an installed coding-agent CLI in non-interactive mode, using
@@ -52,7 +53,7 @@ func (c *CLIAgent) Complete(ctx context.Context, req Request) (string, error) {
 		args = append(args, prompt)
 	}
 
-	log.Printf("[cli] %s: running %q args=%v (promptViaStdin=%v)", c.name, c.bin, args, c.promptViaStdin)
+	dbg.Printf("[cli] %s: running %q args=%v (promptViaStdin=%v)", c.name, c.bin, args, c.promptViaStdin)
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

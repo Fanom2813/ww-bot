@@ -20,11 +20,13 @@ import (
 
 	"wwbot/internal/brain"
 	"wwbot/internal/commands"
+	"wwbot/internal/dbg"
 	"wwbot/internal/inbox"
+	"wwbot/internal/llm"
 	"wwbot/internal/safety"
 	"wwbot/internal/schedule"
-	"wwbot/internal/stt"
 	"wwbot/internal/store"
+	"wwbot/internal/stt"
 )
 
 // Notifier pushes a user-facing notification (mapped to a UI event by the app).
@@ -33,6 +35,19 @@ type Notifier func(level, title, body string)
 // UnknownNotifier is called the first time an unsaved number messages the user,
 // so the app can prompt to save them. preview is a short excerpt of the message.
 type UnknownNotifier func(jid, name, preview string)
+
+// WorkingNotifier is called when the bot has taken a non-silent action on an
+// inbound message (reply queued, draft created, or notify) — used by the UI to
+// play a subtle sound. Ignored / silent decisions do NOT fire this.
+type WorkingNotifier func(chatJID, action string)
+
+// DraftNotifier is called whenever the pending-drafts queue changes (created,
+// approved, or rejected) so the UI can refresh without polling.
+type DraftNotifier func()
+
+// ActivityNotifier is called whenever a new activity row has been logged, so
+// the UI can append it live instead of polling.
+type ActivityNotifier func()
 
 // PendingContact is an unsaved number awaiting a save/ignore decision, surfaced
 // in the UI as an "action needed".
@@ -48,21 +63,22 @@ type SendFunc func(ctx context.Context, toJID, text string) error
 
 // Inbound is a normalized incoming message handed to the core by the app.
 type Inbound struct {
-	ChatJID   string
-	SenderJID string
-	PushName  string
-	Text      string
-	Kind      string // text | voice | image | other
-	IsFromMe  bool
-	IsGroup   bool
-	Timestamp time.Time
-	Audio     []byte // voice-note bytes (Kind == "voice")
+	ChatJID    string
+	SenderJID  string
+	PushName   string
+	Text       string
+	Kind       string // text | voice | image | other
+	IsFromMe   bool
+	IsGroup    bool
+	MentionsMe bool // group messages: bot's own number was @-mentioned
+	Timestamp  time.Time
+	Audio      []byte // voice-note bytes (Kind == "voice")
 }
 
 // Core is the orchestrator.
 type Core struct {
-	db       *store.DB
-	notify   Notifier
+	db        *store.DB
+	notify    Notifier
 	scheduler *schedule.Scheduler
 
 	mu       sync.RWMutex
@@ -72,9 +88,15 @@ type Core struct {
 	gate     *safety.Gate
 	debounce *inbox.Debouncer
 
-	onUnknown       UnknownNotifier
-	pendingUnknown  map[string]PendingContact // unsaved numbers awaiting a save/ignore decision
-	msgKey          []byte                    // AES key for encrypting stored message history
+	// Notifier hooks are multi-listener: every OnXxx call appends, so several
+	// subsystems (frontend events, dock badge, telemetry, …) can subscribe to
+	// the same signal without overwriting each other.
+	onUnknown      []UnknownNotifier
+	onWorking      []WorkingNotifier
+	onDraft        []DraftNotifier
+	onActivity     []ActivityNotifier
+	pendingUnknown map[string]PendingContact // unsaved numbers awaiting a save/ignore decision
+	msgKey         []byte                    // AES key for encrypting stored message history
 
 	send    SendFunc
 	selfJID string
@@ -99,14 +121,82 @@ func New(ctx context.Context, db *store.DB, notify Notifier) (*Core, error) {
 	return c, nil
 }
 
-// OnUnknownContact registers the callback invoked the first time an unsaved
-// number messages the user. fn may be nil to disable the prompt.
-func (c *Core) OnUnknownContact(fn UnknownNotifier) { c.onUnknown = fn }
+// All On* helpers are multi-listener: each call appends. Registration is
+// guarded by c.mu so it stays race-free even if a goroutine subscribes after
+// the run loop starts. Emit paths take a snapshot under RLock and invoke
+// listeners *outside* the lock so a slow handler can't block other emits.
+
+// OnUnknownContact subscribes to the first-message-from-an-unsaved-number signal.
+func (c *Core) OnUnknownContact(fn UnknownNotifier) {
+	if fn == nil {
+		return
+	}
+	c.mu.Lock()
+	c.onUnknown = append(c.onUnknown, fn)
+	c.mu.Unlock()
+}
+
+// OnWorking subscribes to non-silent decisions (reply / draft / notify) so
+// the UI can play a sound or update telemetry.
+func (c *Core) OnWorking(fn WorkingNotifier) {
+	if fn == nil {
+		return
+	}
+	c.mu.Lock()
+	c.onWorking = append(c.onWorking, fn)
+	c.mu.Unlock()
+}
+
+// OnDraftQueue subscribes to draft-queue changes (created / approved / rejected).
+func (c *Core) OnDraftQueue(fn DraftNotifier) {
+	if fn == nil {
+		return
+	}
+	c.mu.Lock()
+	c.onDraft = append(c.onDraft, fn)
+	c.mu.Unlock()
+}
+
+// OnActivity subscribes to new-audit-row events so the UI can append live.
+func (c *Core) OnActivity(fn ActivityNotifier) {
+	if fn == nil {
+		return
+	}
+	c.mu.Lock()
+	c.onActivity = append(c.onActivity, fn)
+	c.mu.Unlock()
+}
+
+func (c *Core) emitDraftQueue() {
+	c.mu.RLock()
+	subs := append([]DraftNotifier(nil), c.onDraft...)
+	c.mu.RUnlock()
+	for _, fn := range subs {
+		fn()
+	}
+}
+
+// logActivity wraps store.LogActivity to also fire the live-update hook. ALL
+// new audit writes should go through this so the Activity page (and Dashboard
+// "Recent activity") refresh in real time.
+func (c *Core) logActivity(ctx context.Context, kind, chatJID, summary string) error {
+	if err := c.db.LogActivity(ctx, kind, chatJID, summary); err != nil {
+		return err
+	}
+	c.mu.RLock()
+	subs := append([]ActivityNotifier(nil), c.onActivity...)
+	c.mu.RUnlock()
+	for _, fn := range subs {
+		fn()
+	}
+	return nil
+}
 
 // build (re)constructs the LLM registry, transcriber, brain, gate, and inbox
 // from settings. The gate uses a thunk so the sender can be attached later.
 func (c *Core) build(s Settings) {
 	reg := buildRegistry(hydrateKeys(s.Providers))
+	c.wireRegistry(reg)
 	c.brn = brain.New(reg, brainConfig(s))
 	c.stt = buildSTT(s.STT)
 	c.gate = c.newGate(s)
@@ -126,17 +216,32 @@ func (c *Core) newGate(s Settings) *safety.Gate {
 		},
 		safety.Options{
 			OnSent: func(to, text string) {
-				log.Printf("[core] SENT → %q: %q", to, preview(text))
+				dbg.Printf("[core] SENT → %q: %q", to, preview(text))
 				// Persist our own reply to history so the bot remembers what it
 				// already said across restarts (WhatsApp won't echo it to us).
 				c.storeMessage(to, "", text, true)
-				_ = c.db.LogActivity(c.ctx, "sent", to, preview(text))
+				_ = c.logActivity(c.ctx, "sent", to, preview(text))
 			},
 			OnDrop: func(j safety.Job, reason string) {
-				log.Printf("[core] send suppressed → %q: %s", j.ToJID, reason)
-				_ = c.db.LogActivity(c.ctx, "system", j.ToJID, "send suppressed: "+reason)
+				dbg.Printf("[core] send suppressed → %q: %s", j.ToJID, reason)
+				_ = c.logActivity(c.ctx, "system", j.ToJID, "send suppressed: "+reason)
 			},
 		})
+}
+
+// wireRegistry attaches the fallback hook so a non-primary provider answering
+// shows up in the Activity log (and the user knows they're being protected by
+// the fallback chain). Logs are also surfaced via stdout for diagnostics.
+func (c *Core) wireRegistry(reg *llm.Registry) {
+	reg.OnFallback = func(used string, attempts []llm.Attempt) {
+		if len(attempts) == 0 {
+			return
+		}
+		primary := attempts[0].Provider
+		dbg.Printf("[core] llm fallback: %s failed (%v) → answered by %s", primary, attempts[0].Err, used)
+		_ = c.logActivity(c.ctx, "system", "",
+			fmt.Sprintf("LLM fallback: %s failed → %s answered", primary, used))
+	}
 }
 
 // safetyGate returns the current gate (which may be swapped on settings reload).
@@ -151,6 +256,7 @@ func (c *Core) safetyGate() *safety.Gate {
 // hours), and the scheduled proactive tasks are all re-created from s.
 func (c *Core) applySettings(s Settings) {
 	reg := buildRegistry(hydrateKeys(s.Providers))
+	c.wireRegistry(reg)
 	newGate := c.newGate(s)
 
 	c.mu.Lock()
@@ -218,7 +324,7 @@ func (c *Core) registerSchedules() {
 			name = fmt.Sprintf("sched-%d", i)
 		}
 		c.scheduler.Daily(name, t.Hour, t.Min, func(ctx context.Context) {
-			log.Printf("[core] scheduled task %q firing → %d contact(s)", t.Label, len(t.Contacts))
+			dbg.Printf("[core] scheduled task %q firing → %d contact(s)", t.Label, len(t.Contacts))
 			for _, jid := range t.Contacts {
 				if strings.TrimSpace(jid) == "" {
 					continue
@@ -233,7 +339,7 @@ func (c *Core) registerSchedules() {
 
 // OnInbound is the pipeline entry point for an incoming message.
 func (c *Core) OnInbound(in Inbound) {
-	log.Printf("[core] inbound chat=%q sender=%q fromMe=%v group=%v kind=%s self=%q text=%q",
+	dbg.Printf("[core] inbound chat=%q sender=%q fromMe=%v group=%v kind=%s self=%q text=%q",
 		in.ChatJID, in.SenderJID, in.IsFromMe, in.IsGroup, in.Kind, c.selfJID, preview(brain.Redact(in.Text)))
 
 	// Self-chat commands / daily notes. A self-chat is "note to self": you sent
@@ -242,7 +348,7 @@ func (c *Core) OnInbound(in Inbound) {
 	// differences (e.g. LID vs phone-number addressing).
 	if in.IsFromMe && in.ChatJID != "" &&
 		(in.ChatJID == c.selfJID || in.ChatJID == in.SenderJID) {
-		log.Printf("[core] -> self-command")
+		dbg.Printf("[core] -> self-command")
 		c.handleSelfInput(in)
 		return
 	}
@@ -252,7 +358,7 @@ func (c *Core) OnInbound(in Inbound) {
 		text = c.transcribe(in)
 		if text == "" {
 			// Couldn't understand the audio confidently — stay silent, just note it.
-			_ = c.db.LogActivity(c.ctx, "system", in.ChatJID, "voice note not understood — skipped")
+			_ = c.logActivity(c.ctx, "system", in.ChatJID, "voice note not understood — skipped")
 			return
 		}
 	}
@@ -269,7 +375,7 @@ func (c *Core) OnInbound(in Inbound) {
 			if name == "" {
 				name = "Unknown number"
 			}
-			_ = c.db.LogActivity(c.ctx, "flag", in.ChatJID, "sensitive data stripped before processing")
+			_ = c.logActivity(c.ctx, "flag", in.ChatJID, "sensitive data stripped before processing")
 			c.notify("notify", name, "Removed sensitive data (codes/credentials) from this message before processing.")
 		}
 		text = clean
@@ -295,7 +401,8 @@ func (c *Core) OnInbound(in Inbound) {
 
 	c.debounce.Add(inbox.Msg{
 		ChatJID: in.ChatJID, SenderJID: in.SenderJID, PushName: in.PushName,
-		Text: text, Kind: in.Kind, IsFromMe: in.IsFromMe, IsGroup: in.IsGroup, Timestamp: in.Timestamp,
+		Text: text, Kind: in.Kind, IsFromMe: in.IsFromMe,
+		IsGroup: in.IsGroup, MentionsMe: in.MentionsMe, Timestamp: in.Timestamp,
 	})
 }
 
@@ -350,7 +457,7 @@ func (c *Core) handleBatch(b inbox.Batch) {
 	guestTier := c.settings.GuestTier
 	c.mu.RUnlock()
 
-	log.Printf("[core] handleBatch chat=%q msgs=%d unknown=%v group=%v guestMode=%v",
+	dbg.Printf("[core] handleBatch chat=%q msgs=%d unknown=%v group=%v guestMode=%v",
 		b.ChatJID, len(b.Messages), unknown, isGroup(b), guestMode)
 
 	if unknown && !isGroup(b) {
@@ -367,10 +474,10 @@ func (c *Core) handleBatch(b inbox.Batch) {
 		incoming, _ := summarizeBurst(b, "")
 		c.flagUnknown(b.ChatJID, name, incoming)
 		if !guestMode {
-			log.Printf("[core] chat=%q unknown sender + guest mode OFF → no reply (save prompt only)", b.ChatJID)
+			dbg.Printf("[core] chat=%q unknown sender + guest mode OFF → no reply (save prompt only)", b.ChatJID)
 			return
 		}
-		log.Printf("[core] chat=%q unknown sender, guest mode ON → replying at tier=%s", b.ChatJID, guestTier)
+		dbg.Printf("[core] chat=%q unknown sender, guest mode ON → replying at tier=%s", b.ChatJID, guestTier)
 	}
 
 	tier := contact.Tier
@@ -389,10 +496,29 @@ func (c *Core) handleBatch(b inbox.Batch) {
 	day := time.Now().Format("2006-01-02")
 	daily, _ := c.db.GetDailyContext(ctx, day)
 
+	// For group chats, look up the per-group opt-in (default: off). The brain's
+	// pre-model guardrail stays silent unless this is true, so a fresh group
+	// you've never enabled is silently ignored. "mentions" requires that one of
+	// the messages in the burst @-mentioned the bot's own number.
+	groupOptIn := false
+	if isGroup(b) {
+		switch c.db.GetGroupMode(ctx, b.ChatJID) {
+		case store.GroupAlways:
+			groupOptIn = true
+		case store.GroupMentions:
+			for _, m := range b.Messages {
+				if m.MentionsMe {
+					groupOptIn = true
+					break
+				}
+			}
+		}
+	}
+
 	in := brain.Input{
 		SenderName:   senderName,
 		IsGroup:      isGroup(b),
-		GroupOptIn:   false, // group opt-in not yet exposed; default off
+		GroupOptIn:   groupOptIn,
 		Tier:         brain.Tier(tier),
 		Incoming:     incoming,
 		Window:       c.recentTurns(b.ChatJID),
@@ -403,17 +529,28 @@ func (c *Core) handleBatch(b inbox.Batch) {
 		DailyContext: daily,
 	}
 
-	log.Printf("[core] deciding chat=%q tier=%s incoming=%q", b.ChatJID, tier, preview(incoming))
+	dbg.Printf("[core] deciding chat=%q tier=%s incoming=%q", b.ChatJID, tier, preview(incoming))
 	out, err := c.brn.Decide(ctx, in)
 	if err != nil {
 		log.Printf("[core] brain error chat=%q: %v (no provider enabled?)", b.ChatJID, err)
 		c.notify("error", "AI error", err.Error())
 		return
 	}
-	log.Printf("[core] decision chat=%q action=%s confidence=%.2f reason=%q", b.ChatJID, out.Action, out.Confidence, out.Reason)
+	dbg.Printf("[core] decision chat=%q action=%s confidence=%.2f reason=%q", b.ChatJID, out.Action, out.Confidence, out.Reason)
 
 	if out.MemoryUpdate != "" {
 		_ = c.db.UpdateSummary(ctx, b.ChatJID, mergeSummary(contact.Summary, out.MemoryUpdate))
+	}
+
+	// Fire the "working" hook for any non-silent action so the UI can play a
+	// subtle sound. Silent / ignored decisions don't fire.
+	if out.Action != brain.ActSilent {
+		c.mu.RLock()
+		subs := append([]WorkingNotifier(nil), c.onWorking...)
+		c.mu.RUnlock()
+		for _, fn := range subs {
+			fn(b.ChatJID, string(out.Action))
+		}
 	}
 
 	switch out.Action {
@@ -423,12 +560,12 @@ func (c *Core) handleBatch(b inbox.Batch) {
 			log.Printf("[core] send blocked chat=%q: %v → queued as draft", b.ChatJID, err)
 			c.queueDraft(b.ChatJID, in.SenderName, incoming, out.Text, "send blocked: "+err.Error(), out.Confidence)
 		} else {
-			log.Printf("[core] reply queued for paced send → chat=%q", b.ChatJID)
+			dbg.Printf("[core] reply queued for paced send → chat=%q", b.ChatJID)
 		}
 	case brain.ActDraft:
 		c.queueDraft(b.ChatJID, in.SenderName, incoming, out.Text, out.Reason, out.Confidence)
 	case brain.ActNotify:
-		_ = c.db.LogActivity(ctx, "flag", b.ChatJID, out.Reason)
+		_ = c.logActivity(ctx, "flag", b.ChatJID, out.Reason)
 		body := out.Reason
 		if out.Text != "" {
 			body += "\nSuggested: " + out.Text
@@ -439,7 +576,7 @@ func (c *Core) handleBatch(b inbox.Batch) {
 		if reason == "" {
 			reason = "decided no reply was needed"
 		}
-		_ = c.db.LogActivity(ctx, "silent", b.ChatJID, reason)
+		_ = c.logActivity(ctx, "silent", b.ChatJID, reason)
 	}
 }
 
@@ -461,10 +598,13 @@ func (c *Core) flagUnknown(jid, name, text string) {
 	c.pendingUnknown[jid] = pc
 	c.mu.Unlock()
 
-	_ = c.db.LogActivity(c.ctx, "flag", jid, "new number — save prompt")
-	log.Printf("[core] new-number prompt queued for %s", jid)
-	if c.onUnknown != nil {
-		c.onUnknown(pc.JID, pc.Name, pc.Preview)
+	_ = c.logActivity(c.ctx, "flag", jid, "new number — save prompt")
+	dbg.Printf("[core] new-number prompt queued for %s", jid)
+	c.mu.RLock()
+	subs := append([]UnknownNotifier(nil), c.onUnknown...)
+	c.mu.RUnlock()
+	for _, fn := range subs {
+		fn(pc.JID, pc.Name, pc.Preview)
 	}
 }
 
@@ -493,8 +633,9 @@ func (c *Core) queueDraft(chatJID, senderName, incoming, reply, reason string, c
 		ChatJID: chatJID, SenderJID: chatJID, SenderName: senderName,
 		Incoming: incoming, Reply: reply, Reason: reason, Confidence: conf,
 	})
-	_ = c.db.LogActivity(c.ctx, "draft", chatJID, reason)
+	_ = c.logActivity(c.ctx, "draft", chatJID, reason)
 	c.notify("draft", "Draft needs review", fmt.Sprintf("%s: %s", senderName, preview(reply)))
+	c.emitDraftQueue()
 }
 
 // ---- self-chat commands -------------------------------------------------
@@ -533,7 +674,7 @@ func (c *Core) handleSelfInput(in Inbound) {
 		summary = "unknown command: " + preview(in.Text)
 	}
 	if summary != "" {
-		_ = c.db.LogActivity(c.ctx, "command", c.selfJID, summary)
+		_ = c.logActivity(c.ctx, "command", c.selfJID, summary)
 	}
 }
 
@@ -608,24 +749,62 @@ func (c *Core) ApproveDraft(id int64, edited string) error {
 		return err
 	}
 	_ = c.db.SetDraftStatus(c.ctx, id, store.DraftSent, edited)
-	_ = c.db.LogActivity(c.ctx, "sent", dr.ChatJID, "approved draft sent")
+	_ = c.logActivity(c.ctx, "sent", dr.ChatJID, "approved draft sent")
+	c.emitDraftQueue()
 	return nil
+}
+
+// ApproveDraftsFromContact approves every pending draft for a chat in order
+// (oldest first), letting the safety gate pace them. Returns the count sent.
+func (c *Core) ApproveDraftsFromContact(chatJID string) (int, error) {
+	all, err := c.db.ListDrafts(c.ctx, store.DraftPending)
+	if err != nil {
+		return 0, err
+	}
+	sent := 0
+	for _, d := range all {
+		if d.ChatJID != chatJID {
+			continue
+		}
+		if err := c.ApproveDraft(d.ID, ""); err != nil {
+			return sent, err
+		}
+		sent++
+	}
+	return sent, nil
 }
 
 // RejectDraft discards a draft.
 func (c *Core) RejectDraft(id int64) error {
-	return c.db.SetDraftStatus(c.ctx, id, store.DraftRejected, "")
+	err := c.db.SetDraftStatus(c.ctx, id, store.DraftRejected, "")
+	if err == nil {
+		c.emitDraftQueue()
+	}
+	return err
 }
 
 // ---- passthrough accessors for the UI -----------------------------------
 
-func (c *Core) ListContacts() ([]store.Contact, error)      { return c.db.ListContacts(c.ctx) }
+func (c *Core) ListContacts() ([]store.Contact, error) { return c.db.ListContacts(c.ctx) }
 func (c *Core) UpsertContact(ct store.Contact) error {
 	c.DismissContact(ct.JID) // saving resolves any pending "new number" prompt
 	return c.db.UpsertContact(c.ctx, ct)
 }
 func (c *Core) ListActivity(limit int) ([]store.Activity, error) {
 	return c.db.ListActivity(c.ctx, limit)
+}
+
+// ListGroups returns the saved per-group opt-in rows.
+func (c *Core) ListGroups() ([]store.Group, error) { return c.db.ListGroups(c.ctx) }
+
+// SaveGroup upserts a group's opt-in mode (off / always). Empty mode → off.
+func (c *Core) SaveGroup(g store.Group) error { return c.db.UpsertGroup(c.ctx, g) }
+
+// CountActivityToday returns the number of audit entries logged since local midnight.
+func (c *Core) CountActivityToday() (int, error) {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return c.db.CountActivitySince(c.ctx, start)
 }
 
 // SetToday sets today's context from the UI (with any secrets scrubbed).
@@ -683,11 +862,11 @@ func (c *Core) StartProactive(chatJID, topic string) error {
 	if strings.TrimSpace(text) == "" {
 		return errors.New("core: model returned an empty proactive message")
 	}
-	log.Printf("[core] proactive chat=%q topic=%q -> %q", chatJID, topic, preview(text))
+	dbg.Printf("[core] proactive chat=%q topic=%q -> %q", chatJID, topic, preview(text))
 	if err := c.safetyGate().Enqueue(safety.Job{ToJID: chatJID, Parts: splitMessages(text), BypassQuiet: true}); err != nil {
 		return err
 	}
-	_ = c.db.LogActivity(c.ctx, "proactive", chatJID, preview(text))
+	_ = c.logActivity(c.ctx, "proactive", chatJID, preview(text))
 	return nil
 }
 
@@ -762,8 +941,7 @@ func (c *Core) Status() string {
 	if c.safetyGate().Paused() {
 		state = "paused"
 	}
-	pending, _ := c.db.ListDrafts(c.ctx, store.DraftPending)
-	return fmt.Sprintf("Bot is %s · %d draft(s) awaiting review.", state, len(pending))
+	return fmt.Sprintf("Bot is %s", state)
 }
 
 const helpText = "🤖 *WW Bot — commands*\n" +

@@ -13,13 +13,13 @@ func TestInQuietHours(t *testing.T) {
 		h, start, end int
 		want          bool
 	}{
-		{3, 23, 7, true},   // wrap, inside
-		{8, 23, 7, false},  // wrap, outside
-		{23, 23, 7, true},  // wrap, at start
-		{7, 23, 7, false},  // wrap, at end (exclusive)
-		{12, 9, 17, true},  // normal, inside
-		{8, 9, 17, false},  // normal, before
-		{5, 0, 0, false},   // disabled
+		{3, 23, 7, true},  // wrap, inside
+		{8, 23, 7, false}, // wrap, outside
+		{23, 23, 7, true}, // wrap, at start
+		{7, 23, 7, false}, // wrap, at end (exclusive)
+		{12, 9, 17, true}, // normal, inside
+		{8, 9, 17, false}, // normal, before
+		{5, 0, 0, false},  // disabled
 	}
 	for _, c := range cases {
 		if got := inQuietHours(c.h, c.start, c.end); got != c.want {

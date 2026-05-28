@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { Contact, ContactsService } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -38,12 +38,23 @@ type Props = {
 
 /** ContactDialog is the modal editor used to add or configure a managed contact. */
 export function ContactDialog({ contact, jidEditable, onClose, onSaved }: Props) {
-  const [c, setC] = useState<Contact | null>(contact);
+  const [edits, setEdits] = useState<Partial<Contact>>({});
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => setC(contact), [contact]);
+  // Merge the canonical contact with any local edits.
+  const c = contact ? { ...contact, ...edits } as Contact : null;
 
-  const set = (patch: Partial<Contact>) => c && setC({ ...c, ...patch } as Contact);
+  const set = useCallback((patch: Partial<Contact>) => {
+    setEdits((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  // Reset local edits when the contact changes (e.g. dialog re-opened with a different row).
+  const handleOpenChange = useCallback((open: boolean) => {
+    if (!open && !saving) {
+      setEdits({});
+      onClose();
+    }
+  }, [saving, onClose]);
 
   const save = () => {
     if (!c) return;
@@ -52,6 +63,7 @@ export function ContactDialog({ contact, jidEditable, onClose, onSaved }: Props)
     ContactsService.Upsert(new Contact({ ...c, jid } as Contact))
       .then(() => {
         toast.success("Contact saved", { description: c.name || jid });
+        setEdits({});
         onSaved();
         onClose();
       })
@@ -60,7 +72,7 @@ export function ContactDialog({ contact, jidEditable, onClose, onSaved }: Props)
   };
 
   return (
-    <Dialog open={contact !== null} onOpenChange={(open) => !open && !saving && onClose()}>
+    <Dialog open={contact !== null} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{jidEditable ? "Add contact" : c?.name || c?.jid}</DialogTitle>
@@ -144,7 +156,7 @@ export function ContactDialog({ contact, jidEditable, onClose, onSaved }: Props)
         )}
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={saving}>
+          <Button variant="ghost" onClick={() => { setEdits({}); onClose(); }} disabled={saving}>
             Cancel
           </Button>
           <Button onClick={save} disabled={saving || !c?.jid.trim()}>

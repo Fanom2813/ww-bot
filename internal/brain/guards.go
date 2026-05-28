@@ -19,7 +19,7 @@ var (
 		"seed phrase", "private key", "login code",
 	}
 	// reCodeWord: a short digit run near code/verification language.
-	reCodeWord = regexp.MustCompile(`(?i)\b(code|otp|verification|verify|passcode)\b[^0-9]{0,20}\b\d{4,8}\b`)
+	reCodeWord  = regexp.MustCompile(`(?i)\b(code|otp|verification|verify|passcode)\b[^0-9]{0,20}\b\d{4,8}\b`)
 	reCodeWord2 = regexp.MustCompile(`(?i)\b\d{4,8}\b[^0-9]{0,20}\b(code|otp|verification|verify|passcode)\b`)
 	// reLongDigits: long digit sequences (cards/accounts).
 	reLongDigits = regexp.MustCompile(`\b\d{12,}\b`)

@@ -41,26 +41,46 @@ export function Schedules() {
     return (jid: string) => m.get(jid) || jid.split("@")[0].split(":")[0];
   }, [contacts]);
 
-  // persist saves the whole task list and reloads (the cron re-registers live).
-  const persist = (next: ScheduledTask[], msg = "Schedule saved") => {
-    setTasks(next);
-    ScheduleService.Save(next)
-      .then(() => {
-        toast.success(msg);
-        load();
-      })
-      .catch((e) => toast.error("Save failed", { description: String(e) }));
-  };
-
-  const saveTask = (t: ScheduledTask) => {
-    const exists = tasks.some((x) => x.id === t.id);
-    const next = exists ? tasks.map((x) => (x.id === t.id ? t : x)) : [...tasks, t];
+  const saveTask = useCallback((t: ScheduledTask) => {
     setEditing(null);
-    persist(next);
-  };
-  const removeTask = (id: string) => persist(tasks.filter((x) => x.id !== id), "Schedule removed");
-  const toggleTask = (id: string, enabled: boolean) =>
-    persist(tasks.map((x) => (x.id === id ? new ScheduledTask({ ...x, enabled }) : x)));
+    setTasks((current) => {
+      const exists = current.some((x) => x.id === t.id);
+      const next = exists ? current.map((x) => (x.id === t.id ? t : x)) : [...current, t];
+      ScheduleService.Save(next)
+        .then(() => {
+          toast.success("Schedule saved");
+          load();
+        })
+        .catch((e) => toast.error("Save failed", { description: String(e) }));
+      return next;
+    });
+  }, [load]);
+
+  const removeTask = useCallback((id: string) => {
+    setTasks((current) => {
+      const next = current.filter((x) => x.id !== id);
+      ScheduleService.Save(next)
+        .then(() => {
+          toast.success("Schedule removed");
+          load();
+        })
+        .catch((e) => toast.error("Save failed", { description: String(e) }));
+      return next;
+    });
+  }, [load]);
+
+  const toggleTask = useCallback((id: string, enabled: boolean) => {
+    setTasks((current) => {
+      const next = current.map((x) => (x.id === id ? new ScheduledTask({ ...x, enabled }) : x));
+      ScheduleService.Save(next)
+        .then(() => {
+          toast.success("Schedule saved");
+          load();
+        })
+        .catch((e) => toast.error("Save failed", { description: String(e) }));
+      return next;
+    });
+  }, [load]);
 
   const addTask = () =>
     setEditing(
@@ -109,11 +129,12 @@ export function Schedules() {
         ),
       },
     ],
-    [nameFor],
+    [nameFor, toggleTask, removeTask],
   );
 
   return (
     <Page
+      fill
       title="Schedules"
       description="Recurring proactive messages — the bot reaches out to contacts at a set time each day following your instruction."
       actions={

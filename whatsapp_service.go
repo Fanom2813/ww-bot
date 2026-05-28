@@ -98,6 +98,15 @@ func (s *WhatsAppService) Contacts() ([]wa.WAContact, error) {
 	return s.client.Contacts(context.Background())
 }
 
+// Groups returns the WhatsApp groups the account is a member of, so the UI
+// can list them and turn the bot on for selected groups.
+func (s *WhatsAppService) Groups() ([]wa.WAGroup, error) {
+	if s.client == nil {
+		return nil, nil
+	}
+	return s.client.Groups(context.Background())
+}
+
 // Logout disconnects from WhatsApp and deletes the session, forcing a fresh
 // QR pair on the next StartPairing call.
 func (s *WhatsAppService) Logout() error {
@@ -129,7 +138,8 @@ func (s *WhatsAppService) bridge(events <-chan wa.Event) {
 			s.core.OnInbound(core.Inbound{
 				ChatJID: ev.ChatJID, SenderJID: ev.SenderJID, PushName: ev.PushName,
 				Text: ev.Text, Kind: string(ev.Kind), IsFromMe: ev.IsFromMe,
-				IsGroup: ev.IsGroup, Timestamp: ev.Timestamp, Audio: ev.AudioData,
+				IsGroup: ev.IsGroup, MentionsMe: ev.MentionsMe,
+				Timestamp: ev.Timestamp, Audio: ev.AudioData,
 			})
 		case wa.Call:
 			emitNotice(Notice{Level: "notify", Title: "Incoming call", Body: ev.FromJID})

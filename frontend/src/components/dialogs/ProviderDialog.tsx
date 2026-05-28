@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ProviderSetting } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,15 +26,46 @@ type Props = {
   onSave: (p: ProviderSetting) => void;
 };
 
+type LocalEdits = Partial<ProviderSetting> & {
+  /** The raw text for the CLI args input (joined from provider.args or typed by user). */
+  _argsText?: string;
+};
+
 /** ProviderDialog adds or edits an LLM provider: OpenAI-compatible, Anthropic, or a custom CLI. */
 export function ProviderDialog({ provider, onClose, onSave }: Props) {
-  const [p, setP] = useState<ProviderSetting | null>(provider);
-  const [argsText, setArgsText] = useState("");
+  const [edits, setEdits] = useState<LocalEdits>({});
+  const lastProviderName = useRef<string | undefined>(undefined);
 
-  useEffect(() => {
-    setP(provider);
-    setArgsText((provider?.args ?? []).join(" "));
-  }, [provider]);
+  // When the provider identity changes (dialog opened with a different row),
+  // reset all local edits.
+  if (provider?.name !== lastProviderName.current) {
+    lastProviderName.current = provider?.name;
+    setEdits({});
+  }
+
+  // Merge the canonical provider with any local edits.
+  const p = provider ? { ...provider, ...edits } as ProviderSetting : null;
+
+  // Compute the args text: if the user has edited it, use their text;
+  // otherwise derive from the provider's args array.
+  const argsText = edits._argsText !== undefined
+    ? edits._argsText
+    : (provider?.args ?? []).join(" ");
+
+  const set = useCallback((patch: Partial<ProviderSetting>) => {
+    setEdits((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const setArgsText = useCallback((text: string) => {
+    setEdits((prev) => ({ ...prev, _argsText: text }));
+  }, []);
+
+  const handleOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      setEdits({});
+      onClose();
+    }
+  }, [onClose]);
 
   if (!p) return null;
 
@@ -42,7 +73,6 @@ export function ProviderDialog({ provider, onClose, onSave }: Props) {
   const kind = p.kind || "openai";
   const isAnthropic = kind === "anthropic";
   const isCLI = kind === "cli";
-  const set = (patch: Partial<ProviderSetting>) => setP({ ...p, ...patch } as ProviderSetting);
 
   const valid =
     !!p.name.trim() &&
@@ -69,7 +99,7 @@ export function ProviderDialog({ provider, onClose, onSave }: Props) {
   };
 
   return (
-    <Dialog open={provider !== null} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={provider !== null} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit provider" : "Add LLM provider"}</DialogTitle>
@@ -186,7 +216,7 @@ export function ProviderDialog({ provider, onClose, onSave }: Props) {
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => { setEdits({}); onClose(); }}>
             Cancel
           </Button>
           <Button onClick={save} disabled={!valid}>

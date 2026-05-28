@@ -8,6 +8,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/services/dock"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
 	"wwbot/internal/core"
@@ -48,6 +49,10 @@ func main() {
 	// Native OS notifications (new-number prompts). Wired to the core below.
 	ns := notifications.New()
 
+	// Dock badge: counts pending approvals + unsaved-contact prompts so the
+	// user sees something needs attention without opening the window.
+	dk := dock.New()
+
 	app := application.New(application.Options{
 		Name:        "ww-bot",
 		Description: "WhatsApp AI reply assistant",
@@ -59,7 +64,9 @@ func main() {
 			application.NewService(&ActivityService{core: cr}),
 			application.NewService(&ControlService{core: cr}),
 			application.NewService(&ScheduleService{core: cr}),
+			application.NewService(&GroupsService{core: cr}),
 			application.NewService(ns),
+			application.NewService(dk),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -77,8 +84,8 @@ func main() {
 			// Solid (non-vibrancy) backdrop: animating the sidebar width over a
 			// translucent backdrop forces macOS to re-blur every frame, which makes
 			// the collapse animation stutter.
-			Backdrop:  application.MacBackdropNormal,
-			TitleBar:  application.MacTitleBarHiddenInset,
+			Backdrop: application.MacBackdropNormal,
+			TitleBar: application.MacTitleBarHiddenInset,
 		},
 		BackgroundColour: application.NewRGB(10, 10, 10),
 		URL:              "/",
@@ -97,10 +104,16 @@ func main() {
 	// Bridge the core's unknown-contact prompt to in-app + native notifications,
 	// and ask for notification permission once the run loop is up.
 	wireNotifications(cr, ns)
+
+	// Dock badge tracker: refresh on every queue/contact change so it always
+	// matches what the user sees inside the app. The initial sync waits for
+	// ApplicationStarted since NSApp must be running for the badge call to land.
+	syncBadge := wireDockBadge(cr, dk)
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		if ok, err := ns.RequestNotificationAuthorization(); err != nil || !ok {
 			log.Printf("notification authorization: granted=%v err=%v", ok, err)
 		}
+		syncBadge()
 	})
 
 	setupTray(app, win, cr)

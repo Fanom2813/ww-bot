@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { ContactsService } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -30,13 +30,6 @@ export function ProactiveDialog({ target, onClose }: Props) {
   const [mode, setMode] = useState<"auto" | "topic">("auto");
   const [topic, setTopic] = useState("");
   const [sending, setSending] = useState(false);
-
-  useEffect(() => {
-    if (target) {
-      setMode("auto");
-      setTopic("");
-    }
-  }, [target]);
 
   if (!target) return null;
 

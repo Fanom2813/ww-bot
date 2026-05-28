@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { ScheduledTask } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,11 +28,16 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 /** ScheduleDialog edits one recurring proactive task (a daily "cron"). */
 export function ScheduleDialog({ task, contacts, onClose, onSave }: Props) {
-  const [t, setT] = useState<ScheduledTask | null>(task);
-  useEffect(() => setT(task), [task]);
+  const [edits, setEdits] = useState<Partial<ScheduledTask>>({});
+  const prevTask = useRef(task);
+  if (task !== prevTask.current) {
+    prevTask.current = task;
+    setEdits({});
+  }
+  const t = task ? ({ ...task, ...edits } as ScheduledTask) : null;
   if (!t) return null;
 
-  const set = (patch: Partial<ScheduledTask>) => setT({ ...t, ...patch } as ScheduledTask);
+  const set = (patch: Partial<ScheduledTask>) => setEdits((prev) => ({ ...prev, ...patch }));
   const selected = new Set(t.contacts ?? []);
   const toggle = (jid: string) => {
     const next = new Set(selected);
@@ -50,7 +55,7 @@ export function ScheduleDialog({ task, contacts, onClose, onSave }: Props) {
           <DialogTitle>{t.label || "Scheduled message"}</DialogTitle>
           <DialogDescription>
             Every day at the set time, the bot reaches out to the chosen contacts following your
-            instruction (it adapts to the history and date).
+            instruction (adapts to the history and date).
           </DialogDescription>
         </DialogHeader>
 
@@ -97,7 +102,7 @@ export function ScheduleDialog({ task, contacts, onClose, onSave }: Props) {
             <div className="max-h-48 overflow-auto rounded-md border">
               {contacts.length === 0 ? (
                 <p className="p-3 text-sm text-muted-foreground">
-                  No saved contacts yet — add some on the Contacts page first.
+                  No saved contacts yet: add some on the Contacts page first.
                 </p>
               ) : (
                 contacts.map((c) => {

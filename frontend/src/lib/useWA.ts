@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { use } from "react";
 import { WAContext } from "@/lib/WAContext";
 import type { WAStatus } from "@/lib/useWhatsApp";
 
@@ -11,7 +11,7 @@ export function useWA(): {
   online: boolean;
   startPairing: () => void;
 } {
-  const ctx = useContext(WAContext);
+  const ctx = use(WAContext);
   if (!ctx) throw new Error("useWA must be used inside <WAProvider>");
   return ctx;
 }

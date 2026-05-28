@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ControlService } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -24,10 +24,20 @@ type Props = {
 export function TodayContextDialog({ open, onOpenChange }: Props) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
+  const loadedRef = useRef(false);
 
-  useEffect(() => {
-    if (open) ControlService.Today().then(setText).catch(() => {});
-  }, [open]);
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen && !loadedRef.current) {
+      loadedRef.current = true;
+      ControlService.Today()
+        .then(setText)
+        .catch(() => {});
+    }
+    if (!nextOpen) {
+      loadedRef.current = false;
+    }
+    onOpenChange(nextOpen);
+  }, [onOpenChange]);
 
   const save = () => {
     setSaving(true);
@@ -41,7 +51,7 @@ export function TodayContextDialog({ open, onOpenChange }: Props) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
+    <Dialog open={open} onOpenChange={(o) => !saving && handleOpenChange(o)}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Today's context</DialogTitle>

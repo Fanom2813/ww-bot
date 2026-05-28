@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { NavLink } from "react-router";
 import { Events } from "@wailsio/runtime";
 import { toast } from "sonner";
@@ -20,6 +20,7 @@ import {
   Draft,
   PendingContact,
 } from "@/lib/api";
+import { ScheduleService } from "@/lib/api";
 import { ContactDialog, TodayContextDialog } from "@/components/dialogs";
 import { StatCards } from "@/components/StatCards";
 import {
@@ -38,48 +39,69 @@ function numberOf(jid: string): string {
 }
 
 export function Dashboard() {
-  const [status, setStatus] = useState("Loading…");
-  const [paused, setPaused] = useState(false);
-  const [pending, setPending] = useState(0);
-  const [todayCount, setTodayCount] = useState(0);
-  const [recent, setRecent] = useState<
-    { id: number; kind: string; summary: string; ts: string }[]
-  >([]);
-  const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [pendingNew, setPendingNew] = useState<PendingContact[]>([]);
-  const [saving, setSaving] = useState<Contact | null>(null);
+  const [botStatus, setBotStatus] = useState(() => {
+    ControlService.Status().then((s) => setBotStatus((b) => ({ ...b, status: s }))).catch(() => setBotStatus((b) => ({ ...b, status: "unavailable" })));
+    ControlService.Paused().then((p) => setBotStatus((b) => ({ ...b, paused: p }))).catch(() => {});
+    return { status: "Loading…", paused: false };
+  });
+  const [counts, setCounts] = useState({ pending: 0, today: 0 });
+  const [data, setData] = useState({
+    drafts: [] as Draft[],
+    pendingNew: [] as PendingContact[],
+    recent: [] as { id: number; kind: string; summary: string; ts: string }[],
+  });
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [schedules, setSchedules] = useState<{ id: string; enabled: boolean }[]>([]);
+  const [ui, setUi] = useState({ saving: null as Contact | null, todayOpen: false });
+  const [todayContext, setTodayContext] = useState("");
 
-  const loadActions = () => {
+  const loadActions = useCallback(() => {
     ApprovalsService.List()
       .then((d) => {
-        setDrafts(d ?? []);
-        setPending((d ?? []).length);
+        setData((a) => ({ ...a, drafts: d ?? [] }));
+        setCounts((c) => ({ ...c, pending: (d ?? []).length }));
       })
       .catch(() => {});
     ContactsService.PendingNew()
-      .then((p) => setPendingNew(p ?? []))
+      .then((p) => setData((a) => ({ ...a, pendingNew: p ?? [] })))
       .catch(() => {});
-  };
+    ContactsService.List()
+      .then((c) => setContacts(c ?? []))
+      .catch(() => {});
+    ScheduleService.List()
+      .then((s) => setSchedules((s ?? []).map((t) => ({ id: t.id, enabled: t.enabled }))))
+      .catch(() => {});
+    ControlService.Today().then(setTodayContext).catch(() => {});
+  }, []);
+
+  // Recent activity widget: just the 5 most rows. Also refreshes the "today"
+  // count so the stat stays in sync with the same fetch cadence.
+  const loadRecent = useCallback(() => {
+    ActivityService.List(5)
+      .then((a) =>
+        setData((d) => ({
+          ...d,
+          recent: (a ?? []).map((x) => ({ id: x.id, kind: x.kind, summary: x.summary, ts: x.ts })),
+        })),
+      )
+      .catch(() => {});
+    ActivityService.CountToday()
+      .then((n) => setCounts((c) => ({ ...c, today: n })))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
-    ControlService.Status().then(setStatus).catch(() => setStatus("unavailable"));
-    ControlService.Paused().then(setPaused).catch(() => {});
-    loadActions();
-    ActivityService.List(24)
-      .then((a) => {
-        setRecent((a ?? []).map((x) => ({ id: x.id, kind: x.kind, summary: x.summary, ts: x.ts })));
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        setTodayCount(
-          (a ?? []).filter((x) => new Date(x.ts) >= todayStart).length,
-        );
-      })
-      .catch(() => {});
-
-    // Live-refresh the actions list when a new number comes in.
-    const off = Events.On("unknown", () => loadActions());
-    return () => off();
-  }, []);
+    // Live updates: new unknown contact → refresh actions; new activity row →
+    // refresh the recent feed and today count.
+    const offUnknown = Events.On("unknown", () => loadActions());
+    const offActivity = Events.On("activity", () => loadRecent());
+    const offDrafts = Events.On("drafts", () => loadActions());
+    return () => {
+      offUnknown();
+      offActivity();
+      offDrafts();
+    };
+  }, [loadActions, loadRecent]);
 
   const approveDraft = (id: number) =>
     ApprovalsService.Approve(id, "")
@@ -99,9 +121,15 @@ export function Dashboard() {
       .then(loadActions)
       .catch(() => {});
 
-  const actionsCount = drafts.length + pendingNew.length;
+  const actionsCount = data.drafts.length + data.pendingNew.length;
+  const { status, paused } = botStatus;
+  const { pending, today } = counts;
+  const { drafts, pendingNew, recent } = data;
+  const { saving, todayOpen } = ui;
 
-  const [todayOpen, setTodayOpen] = useState(false);
+  const autoCount = contacts.filter((c) => c.tier === "auto").length;
+  const draftCount = contacts.filter((c) => c.tier === "draft").length;
+  const activeSchedules = schedules.filter((s) => s.enabled).length;
 
   const kindIcon: Record<string, typeof Send> = {
     sent: Send,
@@ -114,7 +142,7 @@ export function Dashboard() {
       title="Dashboard"
       description="Status, today's context, and recent activity."
       actions={
-        <Button variant="outline" size="sm" onClick={() => setTodayOpen(true)}>
+        <Button variant="outline" size="sm" onClick={() => setUi((u) => ({ ...u, todayOpen: true }))}>
           <NotebookPen className="size-4" /> Today's context
         </Button>
       }
@@ -135,9 +163,27 @@ export function Dashboard() {
               hint: pending > 0 ? "needs review" : "clear",
               tone: pending > 0 ? "negative" : "positive",
             },
-            { label: "Actions today", value: todayCount, hint: "since midnight" },
+            {
+              label: "Contacts",
+              value: contacts.length,
+              hint: contacts.length > 0 ? `${autoCount} auto, ${draftCount} draft` : undefined,
+            },
+            {
+              label: "Activity today",
+              value: today,
+              hint: activeSchedules > 0 ? `${activeSchedules} schedule${activeSchedules > 1 ? "s" : ""} active` : undefined,
+            },
           ]}
         />
+
+        {/* Today's context */}
+        {todayContext && (
+          <Card>
+            <CardContent className="pt-4">
+              <p className="text-sm whitespace-pre-wrap">{todayContext}</p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Actions needed + Recent activity, side by side on wide screens */}
         <div className="grid gap-4 lg:grid-cols-2">
@@ -183,13 +229,14 @@ export function Dashboard() {
                       size="sm"
                       variant="outline"
                       onClick={() =>
-                        setSaving(
-                          new Contact({
+                        setUi((u) => ({
+                          ...u,
+                          saving: new Contact({
                             jid: p.jid,
                             name: p.name,
                             tier: "auto" as Contact["tier"],
                           }),
-                        )
+                        }))
                       }
                     >
                       <Check className="size-4" /> Save
@@ -227,7 +274,7 @@ export function Dashboard() {
                       key={a.id}
                       className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0 text-sm"
                     >
-                      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <Icon className="size-4 shrink-0 text-muted-foreground" />
                       <Badge variant="outline" className="shrink-0">
                         {a.kind}
                       </Badge>
@@ -247,11 +294,11 @@ export function Dashboard() {
       <ContactDialog
         contact={saving}
         jidEditable={false}
-        onClose={() => setSaving(null)}
+        onClose={() => setUi((u) => ({ ...u, saving: null }))}
         onSaved={loadActions}
       />
 
-      <TodayContextDialog open={todayOpen} onOpenChange={setTodayOpen} />
+      <TodayContextDialog open={todayOpen} onOpenChange={(o) => setUi((u) => ({ ...u, todayOpen: o }))} />
     </Page>
   );
 }

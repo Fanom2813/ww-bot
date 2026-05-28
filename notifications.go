@@ -56,6 +56,24 @@ func wireNotifications(cr *core.Core, ns *notifications.NotificationService) {
 		saveNewContact(cr, jid, name)
 	})
 
+	cr.OnWorking(func(chatJID, action string) {
+		if a := application.Get(); a != nil {
+			a.Event.Emit("working", map[string]string{"jid": chatJID, "action": action})
+		}
+	})
+
+	cr.OnDraftQueue(func() {
+		if a := application.Get(); a != nil {
+			a.Event.Emit("drafts", nil)
+		}
+	})
+
+	cr.OnActivity(func() {
+		if a := application.Get(); a != nil {
+			a.Event.Emit("activity", nil)
+		}
+	})
+
 	cr.OnUnknownContact(func(jid, name, preview string) {
 		// In-app prompt (toast + dialog) for when the window is open.
 		if a := application.Get(); a != nil {

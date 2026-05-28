@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,11 +85,10 @@ export function DataTable<T>({
   const total = rows.length;
   const pageCount = paged ? Math.max(1, Math.ceil(total / pageSize)) : 1;
 
-  // Reset to the first page whenever the row set changes (search/filter/reload),
-  // and clamp if the current page falls out of range.
-  useEffect(() => {
-    setPage((p) => (p > pageCount - 1 ? 0 : p));
-  }, [total, pageCount]);
+  // Clamp page when it falls out of range after row changes.
+  if (page > 0 && page > pageCount - 1) {
+    setPage(0);
+  }
 
   const visible = paged ? rows.slice(page * pageSize, page * pageSize + pageSize) : rows;
   const showPager = paged && total > pageSize;
@@ -97,9 +96,9 @@ export function DataTable<T>({
   const to = Math.min(total, page * pageSize + pageSize);
 
   return (
-    <div>
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       {(search || filter) && (
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 flex shrink-0 items-center gap-2">
           {search && (
             <div className="relative max-w-sm flex-1">
               <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -131,7 +130,7 @@ export function DataTable<T>({
         </div>
       )}
 
-      <Table containerClassName="max-h-[70vh] rounded-lg border">
+      <Table containerClassName="min-h-0 flex-1 rounded-lg border">
         <TableHeader className="sticky top-0 z-10 bg-background">
           <TableRow>
             {columns.map((col) => (
@@ -169,7 +168,7 @@ export function DataTable<T>({
         </Table>
 
       {showPager && (
-        <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground">
+        <div className="mt-3 flex shrink-0 items-center justify-between text-sm text-muted-foreground">
           <span className="tabular-nums">
             {from}–{to} of {total}
           </span>

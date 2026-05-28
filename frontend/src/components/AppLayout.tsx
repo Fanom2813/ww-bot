@@ -4,15 +4,15 @@ import { System } from "@wailsio/runtime";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { DashboardSidebar } from "@/components/sidebar-02/app-sidebar";
 import { ControlService, WhatsAppService } from "@/lib/api";
+import { useBotSound } from "@/lib/useBotSound";
 
 export function AppLayout({ jid, online }: { jid: string; online: boolean }) {
   const [paused, setPaused] = useState(false);
-  const [isMac, setIsMac] = useState(false);
+  const [isMac] = useState(() => System.IsMac());
   const navigate = useNavigate();
 
-  useEffect(() => {
-    setIsMac(System.IsMac());
-  }, []);
+  // Subtle blip when the bot starts acting on an inbound (not for ignored ones).
+  useBotSound();
 
   useEffect(() => {
     ControlService.Paused().then(setPaused).catch(() => {});

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Navigate } from "react-router";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -43,11 +43,17 @@ export function Onboarding() {
     () => localStorage.getItem(ONBOARDED_KEY) === "1",
   );
 
-  useEffect(() => {
-    if (!completed.has(1) && status === "connected") {
-      setCompleted((prev) => new Set(prev).add(1));
-    }
-  }, [status, completed]);
+  // When the WA connection becomes "connected", mark the link step as done.
+  const markLinkDone = () => {
+    setCompleted((prev) => {
+      if (prev.has(1)) return prev;
+      return new Set(prev).add(1);
+    });
+  };
+
+  if (status === "connected" && !completed.has(1)) {
+    markLinkDone();
+  }
 
   if (onboarded) return <Navigate to="/" replace />;
 
@@ -70,7 +76,7 @@ export function Onboarding() {
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background p-4">
       <div className="w-full max-w-xl">
-        <img src="/logo.png" alt="WW Bot" className="mx-auto mb-4 h-12 w-12 rounded-xl" />
+        <img src="/logo.png" alt="WW Bot" className="mx-auto mb-4 size-12 rounded-xl" />
 
         <div className="mb-6">
           <h3 className="text-center font-semibold text-foreground text-lg">
@@ -188,11 +194,11 @@ function WelcomeContent({ onAccept }: { onAccept: () => void }) {
   return (
     <div className="mt-2 space-y-3">
       <p className="text-muted-foreground text-sm">
-        Your AI assistant replies to WhatsApp messages on your behalf — under your
-        rules, never spamming.
+        Your AI assistant replies to WhatsApp messages on your behalf (under your
+        rules, never spamming).
       </p>
       <div className="flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <p className="text-muted-foreground">
           Linking uses an unofficial WhatsApp connection, which is against WhatsApp's
           terms and carries a real risk of the number being banned. The bot paces
@@ -200,7 +206,7 @@ function WelcomeContent({ onAccept }: { onAccept: () => void }) {
         </p>
       </div>
       <Button size="sm" onClick={onAccept}>
-        I understand — get started
+        I understand, get started
       </Button>
     </div>
   );
@@ -233,7 +239,7 @@ function LinkContent({
           <IconCircleCheckFilled aria-hidden="true" className="size-4 text-emerald-500" />
           <span className="text-sm text-emerald-600">Connected</span>
           <Button size="sm" className="ml-auto" onClick={onDone}>
-            Continue
+            Finish setup
           </Button>
         </div>
       ) : showQR ? (
@@ -244,11 +250,11 @@ function LinkContent({
         </div>
       ) : generating ? (
         <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Generating QR code…
+          <Loader2 className="size-4 animate-spin" /> Generating QR code…
         </div>
       ) : (
         <Button size="sm" className="gap-1.5" onClick={onLink}>
-          <Smartphone className="h-4 w-4" /> Show QR code
+          <Smartphone className="size-4" /> Show QR code
         </Button>
       )}
     </div>

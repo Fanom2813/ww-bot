@@ -100,6 +100,15 @@ CREATE TABLE IF NOT EXISTS messages (
 	ts       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid, id);
+
+-- Per-group opt-in. Default is "off" (the bot stays silent in groups unless the
+-- user explicitly turns one on). "always" replies to every message; future
+-- modes (e.g. "mentions") can be added without a migration.
+CREATE TABLE IF NOT EXISTS groups (
+    jid  TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL DEFAULT 'off'
+);
 `
 	if _, err := d.sql.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
@@ -191,6 +200,72 @@ func (d *DB) ListContacts(ctx context.Context) ([]Contact, error) {
 		c.Tier = TrustTier(tier)
 		c.UpdatedAt = time.Unix(updated, 0)
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Groups (per-group opt-in)
+// ---------------------------------------------------------------------------
+
+// GroupMode controls whether the bot replies in a given group chat.
+type GroupMode string
+
+const (
+	GroupOff      GroupMode = "off"      // never reply (default)
+	GroupMentions GroupMode = "mentions" // only reply when @-mentioned
+	GroupAlways   GroupMode = "always"   // reply to every message — use sparingly
+)
+
+// Group is a stored per-group opt-in row.
+type Group struct {
+	JID  string    `json:"jid"`
+	Name string    `json:"name"`
+	Mode GroupMode `json:"mode"`
+}
+
+// UpsertGroup writes (or replaces) the saved mode for a group chat.
+func (d *DB) UpsertGroup(ctx context.Context, g Group) error {
+	if g.Mode == "" {
+		g.Mode = GroupOff
+	}
+	_, err := d.sql.ExecContext(ctx, `
+INSERT INTO groups (jid, name, mode) VALUES (?, ?, ?)
+ON CONFLICT(jid) DO UPDATE SET name = excluded.name, mode = excluded.mode
+`, g.JID, g.Name, string(g.Mode))
+	if err != nil {
+		return fmt.Errorf("store: upsert group: %w", err)
+	}
+	return nil
+}
+
+// GetGroupMode returns the saved mode for a group, defaulting to GroupOff.
+func (d *DB) GetGroupMode(ctx context.Context, jid string) GroupMode {
+	var mode string
+	err := d.sql.QueryRowContext(ctx, `SELECT mode FROM groups WHERE jid = ?`, jid).Scan(&mode)
+	if err != nil || mode == "" {
+		return GroupOff
+	}
+	return GroupMode(mode)
+}
+
+// ListGroups returns every saved group row, ordered by name.
+func (d *DB) ListGroups(ctx context.Context) ([]Group, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT jid, name, mode FROM groups ORDER BY name, jid`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list groups: %w", err)
+	}
+	defer rows.Close()
+	var out []Group
+	for rows.Next() {
+		var g Group
+		var mode string
+		if err := rows.Scan(&g.JID, &g.Name, &mode); err != nil {
+			return nil, err
+		}
+		g.Mode = GroupMode(mode)
+		out = append(out, g)
 	}
 	return out, rows.Err()
 }
@@ -391,6 +466,17 @@ func (d *DB) ListActivity(ctx context.Context, limit int) ([]Activity, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// CountActivitySince returns how many activity rows have ts >= since.
+func (d *DB) CountActivitySince(ctx context.Context, since time.Time) (int, error) {
+	var n int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM activity WHERE ts >= ?`, since.Unix()).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("store: count activity: %w", err)
+	}
+	return n, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -11,10 +11,11 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"wwbot/internal/brain"
+	"wwbot/internal/dbg"
 	"wwbot/internal/llm"
 	"wwbot/internal/safety"
-	"wwbot/internal/stt"
 	"wwbot/internal/store"
+	"wwbot/internal/stt"
 )
 
 // settingsKey is where the JSON Settings blob lives in the store.
@@ -167,7 +168,7 @@ func loadKey(name string) string {
 	}
 	return v
 }
-func deleteKey(name string) { _ = keyring.Delete(keyringService, name) }
+func deleteKey(name string)   { _ = keyring.Delete(keyringService, name) }
 func hasKey(name string) bool { return loadKey(name) != "" }
 
 // hydrateKeys returns a copy of the providers with API keys pulled from the OS
@@ -193,12 +194,12 @@ func buildRegistry(ps []ProviderSetting) *llm.Registry {
 		}
 		switch p.Kind {
 		case "openai":
-			log.Printf("[core] provider %q (openai) enabled: model=%q hasKey=%v requiresKey=%v", p.Name, p.Model, p.APIKey != "", p.RequiresKey)
+			dbg.Printf("[core] provider %q (openai) enabled: model=%q hasKey=%v requiresKey=%v", p.Name, p.Model, p.APIKey != "", p.RequiresKey)
 			provs = append(provs, llm.NewOpenAICompatible(llm.OpenAIConfig{
 				Name: p.Name, BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.Model, RequiresKey: p.RequiresKey,
 			}))
 		case "anthropic":
-			log.Printf("[core] provider %q (anthropic) enabled: model=%q hasKey=%v", p.Name, p.Model, p.APIKey != "")
+			dbg.Printf("[core] provider %q (anthropic) enabled: model=%q hasKey=%v", p.Name, p.Model, p.APIKey != "")
 			provs = append(provs, llm.NewAnthropic(llm.AnthropicConfig{
 				Name: p.Name, APIKey: p.APIKey, Model: p.Model, BaseURL: p.BaseURL,
 			}))

@@ -47,12 +47,164 @@ function Section({
   );
 }
 
+const num = (v: string) => parseInt(v || "0", 10) || 0;
+
+function NumberField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <Field>
+      <FieldLabel>{label}</FieldLabel>
+      <Input type="number" value={value} onChange={(e) => onChange(num(e.target.value))} />
+    </Field>
+  );
+}
+
+function SafetySection({
+  safety,
+  set,
+}: {
+  safety: SettingsModel["safety"];
+  set: (patch: Partial<SettingsModel>) => void;
+}) {
+  return (
+    <>
+      <Section
+        title="Safety & anti-ban"
+        description="Pacing, caps, and quiet hours keep the bot human-like and protect the number. Applies on next launch."
+      >
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <NumberField label="Min delay (s)" value={safety.minDelaySec} onChange={(v) => set({ safety: { ...safety, minDelaySec: v } })} />
+          <NumberField label="Max delay (s)" value={safety.maxDelaySec} onChange={(v) => set({ safety: { ...safety, maxDelaySec: v } })} />
+          <NumberField label="Per minute" value={safety.perMinute} onChange={(v) => set({ safety: { ...safety, perMinute: v } })} />
+          <NumberField label="Per day" value={safety.perDay} onChange={(v) => set({ safety: { ...safety, perDay: v } })} />
+          <NumberField label="Cooldown (s)" value={safety.perContactCooldownSec} onChange={(v) => set({ safety: { ...safety, perContactCooldownSec: v } })} />
+        </div>
+      </Section>
+
+      <Section
+        title="Quiet hours"
+        description="Pause outgoing replies during these hours so the bot never texts at odd times (scheduled & proactive messages can bypass). Hours are 0-23; e.g. 23 to 7 means 11pm-7am."
+      >
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel htmlFor="quiet">Enable quiet hours</FieldLabel>
+            <FieldDescription>When off, the bot may send at any time of day.</FieldDescription>
+          </FieldContent>
+          <Switch
+            id="quiet"
+            checked={!safety.quietHoursOff}
+            onCheckedChange={(v) => set({ safety: { ...safety, quietHoursOff: !v } })}
+          />
+        </Field>
+        {!safety.quietHoursOff && (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <NumberField label="Quiet start (h)" value={safety.quietStart} onChange={(v) => set({ safety: { ...safety, quietStart: v } })} />
+            <NumberField label="Quiet end (h)" value={safety.quietEnd} onChange={(v) => set({ safety: { ...safety, quietEnd: v } })} />
+          </div>
+        )}
+      </Section>
+    </>
+  );
+}
+
+function BackendsSection({
+  cli,
+  added,
+  typeLabel,
+  subLabel,
+  toggleProvider,
+  removeProvider,
+  setProviderDialog,
+}: {
+  cli: ProviderSetting[];
+  added: ProviderSetting[];
+  typeLabel: (p: ProviderSetting) => string;
+  subLabel: (p: ProviderSetting) => string;
+  toggleProvider: (name: string, enabled: boolean) => void;
+  removeProvider: (name: string) => void;
+  setProviderDialog: (p: ProviderSetting | null) => void;
+}) {
+  return (
+    <Section
+      title="AI backends"
+      description="Tried top-to-bottom; first available answers. CLI agents use your own subscription (no key). Add hosted providers (OpenAI-compatible or Anthropic) with the button below."
+    >
+      {cli.map((p) => (
+        <Field key={p.name} orientation="horizontal">
+          <FieldContent>
+            <FieldLabel>
+              {p.name} <span className="text-muted-foreground">(CLI)</span>
+            </FieldLabel>
+            <FieldDescription>Uses your local agent; only runs if installed.</FieldDescription>
+          </FieldContent>
+          <Switch checked={p.enabled} onCheckedChange={(v) => toggleProvider(p.name, v)} />
+        </Field>
+      ))}
+
+      {added.map((p) => (
+        <Field key={p.name} orientation="horizontal">
+          <FieldContent>
+            <FieldLabel className="flex items-center gap-2">
+              {p.name}
+              <span className="text-muted-foreground">({typeLabel(p)})</span>
+              {p.hasKey && (
+                <Badge variant="secondary" className="text-[10px]">
+                  key set
+                </Badge>
+              )}
+            </FieldLabel>
+            <FieldDescription className="truncate">{subLabel(p)}</FieldDescription>
+          </FieldContent>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setProviderDialog(new ProviderSetting({ ...p } as ProviderSetting))}
+          >
+            <Pencil className="size-4" />
+          </Button>
+          <Button size="icon-sm" variant="ghost" onClick={() => removeProvider(p.name)}>
+            <Trash2 className="size-4" />
+          </Button>
+          <Switch checked={p.enabled} onCheckedChange={(v) => toggleProvider(p.name, v)} />
+        </Field>
+      ))}
+
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            setProviderDialog(
+              new ProviderSetting({ kind: "openai", requiresKey: true } as ProviderSetting),
+            )
+          }
+        >
+          <Plus className="size-4" /> Add provider
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setProviderDialog(new ProviderSetting({ kind: "cli" } as ProviderSetting))}
+        >
+          <Plus className="size-4" /> Add custom CLI
+        </Button>
+      </div>
+    </Section>
+  );
+}
+
 export function Settings() {
   const [s, setS] = useState<SettingsModel | null>(null);
   const [saving, setSaving] = useState(false);
   const [providerDialog, setProviderDialog] = useState<ProviderSetting | null>(null);
-  const [defaultPrompt, setDefaultPrompt] = useState("");
-  const [defaultProactive, setDefaultProactive] = useState("");
+  const [defaults, setDefaults] = useState({ prompt: "", proactive: "" });
 
   const load = () =>
     SettingsService.Get()
@@ -60,8 +212,8 @@ export function Settings() {
       .catch((e) => toast.error("Couldn't load settings", { description: String(e) }));
   useEffect(() => {
     load();
-    SettingsService.DefaultSystemPrompt().then(setDefaultPrompt).catch(() => {});
-    SettingsService.DefaultProactivePrompt().then(setDefaultProactive).catch(() => {});
+    SettingsService.DefaultSystemPrompt().then((p) => setDefaults((d) => ({ ...d, prompt: p }))).catch(() => {});
+    SettingsService.DefaultProactivePrompt().then((p) => setDefaults((d) => ({ ...d, proactive: p }))).catch(() => {});
   }, []);
 
   if (!s) {
@@ -133,8 +285,6 @@ export function Settings() {
       ? [p.bin, ...(p.args ?? [])].join(" ")
       : `${p.model}${p.kind !== "anthropic" && p.baseUrl ? ` · ${p.baseUrl}` : ""}`;
 
-  const num = (v: string) => parseInt(v || "0", 10) || 0;
-
   return (
     <Page
       title="Settings"
@@ -149,13 +299,13 @@ export function Settings() {
         {/* Reply mode */}
         <Section
           title="Reply mode"
-          description="Saved contacts are always handled by their trust tier. Guest mode also lets the bot reply to people who aren’t in your contacts — 1-1 chats only, never groups."
+          description="Saved contacts are always handled by their trust tier. Guest mode also lets the bot reply to people who aren’t in your contacts (1-1 chats only, never groups)."
         >
           <Field orientation="horizontal">
             <FieldContent>
               <FieldLabel htmlFor="guest-mode">Guest mode</FieldLabel>
               <FieldDescription>
-                When off, a new number only triggers a “save contact?” prompt — no reply.
+                When off, a new number only triggers a “save contact?” prompt, no reply.
               </FieldDescription>
             </FieldContent>
             <Switch
@@ -187,27 +337,27 @@ export function Settings() {
         {/* System prompt / persona */}
         <Section
           title="System prompt (persona)"
-          description="How the bot writes replies — its voice, tone, and rules. Per-contact style still applies on top. Leave blank to use the built-in default; the JSON output format is fixed and unaffected by this."
+          description="How the bot writes replies: its voice, tone, and rules. Per-contact style still applies on top. Leave blank to use the built-in default; the JSON output format is fixed and unaffected by this."
         >
           <Field>
             <Textarea
               rows={10}
               className="font-mono text-xs"
-              placeholder={defaultPrompt || "Leave blank to use the built-in default…"}
+              placeholder={defaults.prompt || "Leave blank to use the built-in default…"}
               value={s.systemPrompt}
               onChange={(e) => set({ systemPrompt: e.target.value })}
             />
             <FieldDescription>
               {s.systemPrompt
                 ? "Using your custom prompt."
-                : "Blank — using the built-in default (shown above as placeholder)."}
+                : "Blank: using the built-in default (shown above as placeholder)."}
             </FieldDescription>
             <div className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => set({ systemPrompt: defaultPrompt })}
-                disabled={!defaultPrompt}
+                onClick={() => set({ systemPrompt: defaults.prompt })}
+                disabled={!defaults.prompt}
               >
                 Load default to edit
               </Button>
@@ -229,7 +379,7 @@ export function Settings() {
             <Textarea
               rows={8}
               className="font-mono text-xs"
-              placeholder={defaultProactive || "Leave blank to use the built-in default…"}
+              placeholder={defaults.proactive || "Leave blank to use the built-in default…"}
               value={s.proactivePrompt}
               onChange={(e) => set({ proactivePrompt: e.target.value })}
             />
@@ -237,8 +387,8 @@ export function Settings() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => set({ proactivePrompt: defaultProactive })}
-                disabled={!defaultProactive}
+                onClick={() => set({ proactivePrompt: defaults.proactive })}
+                disabled={!defaults.proactive}
               >
                 Load default to edit
               </Button>
@@ -252,71 +402,15 @@ export function Settings() {
         </Section>
 
         {/* AI backends */}
-        <Section
-          title="AI backends"
-          description="Tried top-to-bottom; first available answers. CLI agents use your own subscription (no key). Add hosted providers (OpenAI-compatible or Anthropic) with the button below."
-        >
-          {cli.map((p) => (
-            <Field key={p.name} orientation="horizontal">
-              <FieldContent>
-                <FieldLabel>
-                  {p.name} <span className="text-muted-foreground">(CLI)</span>
-                </FieldLabel>
-                <FieldDescription>Uses your local agent; only runs if installed.</FieldDescription>
-              </FieldContent>
-              <Switch checked={p.enabled} onCheckedChange={(v) => toggleProvider(p.name, v)} />
-            </Field>
-          ))}
-
-          {added.map((p) => (
-            <Field key={p.name} orientation="horizontal">
-              <FieldContent>
-                <FieldLabel className="flex items-center gap-2">
-                  {p.name}
-                  <span className="text-muted-foreground">({typeLabel(p)})</span>
-                  {p.hasKey && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      key set
-                    </Badge>
-                  )}
-                </FieldLabel>
-                <FieldDescription className="truncate">{subLabel(p)}</FieldDescription>
-              </FieldContent>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                onClick={() => setProviderDialog(new ProviderSetting({ ...p } as ProviderSetting))}
-              >
-                <Pencil className="size-4" />
-              </Button>
-              <Button size="icon-sm" variant="ghost" onClick={() => removeProvider(p.name)}>
-                <Trash2 className="size-4" />
-              </Button>
-              <Switch checked={p.enabled} onCheckedChange={(v) => toggleProvider(p.name, v)} />
-            </Field>
-          ))}
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setProviderDialog(
-                  new ProviderSetting({ kind: "openai", requiresKey: true } as ProviderSetting),
-                )
-              }
-            >
-              <Plus className="size-4" /> Add provider
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setProviderDialog(new ProviderSetting({ kind: "cli" } as ProviderSetting))}
-            >
-              <Plus className="size-4" /> Add custom CLI
-            </Button>
-          </div>
-        </Section>
+        <BackendsSection
+          cli={cli}
+          added={added}
+          typeLabel={typeLabel}
+          subLabel={subLabel}
+          toggleProvider={toggleProvider}
+          removeProvider={removeProvider}
+          setProviderDialog={setProviderDialog}
+        />
 
         {/* Voice */}
         <Section
@@ -352,43 +446,8 @@ export function Settings() {
           </div>
         </Section>
 
-        {/* Safety */}
-        <Section
-          title="Safety & anti-ban"
-          description="Pacing, caps, and quiet hours keep the bot human-like and protect the number. Applies on next launch."
-        >
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            <NumberField label="Min delay (s)" value={s.safety.minDelaySec} onChange={(v) => set({ safety: { ...s.safety, minDelaySec: v } })} />
-            <NumberField label="Max delay (s)" value={s.safety.maxDelaySec} onChange={(v) => set({ safety: { ...s.safety, maxDelaySec: v } })} />
-            <NumberField label="Per minute" value={s.safety.perMinute} onChange={(v) => set({ safety: { ...s.safety, perMinute: v } })} />
-            <NumberField label="Per day" value={s.safety.perDay} onChange={(v) => set({ safety: { ...s.safety, perDay: v } })} />
-            <NumberField label="Cooldown (s)" value={s.safety.perContactCooldownSec} onChange={(v) => set({ safety: { ...s.safety, perContactCooldownSec: v } })} />
-          </div>
-        </Section>
-
-        {/* Quiet hours */}
-        <Section
-          title="Quiet hours"
-          description="Pause outgoing replies during these hours so the bot never texts at odd times (scheduled & proactive messages can bypass). Hours are 0–23; e.g. 23 to 7 means 11pm–7am."
-        >
-          <Field orientation="horizontal">
-            <FieldContent>
-              <FieldLabel htmlFor="quiet">Enable quiet hours</FieldLabel>
-              <FieldDescription>When off, the bot may send at any time of day.</FieldDescription>
-            </FieldContent>
-            <Switch
-              id="quiet"
-              checked={!s.safety.quietHoursOff}
-              onCheckedChange={(v) => set({ safety: { ...s.safety, quietHoursOff: !v } })}
-            />
-          </Field>
-          {!s.safety.quietHoursOff && (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-              <NumberField label="Quiet start (h)" value={s.safety.quietStart} onChange={(v) => set({ safety: { ...s.safety, quietStart: v } })} />
-              <NumberField label="Quiet end (h)" value={s.safety.quietEnd} onChange={(v) => set({ safety: { ...s.safety, quietEnd: v } })} />
-            </div>
-          )}
-        </Section>
+        {/* Safety & Quiet hours */}
+        <SafetySection safety={s.safety} set={set} />
       </div>
 
       <ProviderDialog
@@ -398,21 +457,4 @@ export function Settings() {
       />
     </Page>
   );
-
-  function NumberField({
-    label,
-    value,
-    onChange,
-  }: {
-    label: string;
-    value: number;
-    onChange: (v: number) => void;
-  }) {
-    return (
-      <Field>
-        <FieldLabel>{label}</FieldLabel>
-        <Input type="number" value={value} onChange={(e) => onChange(num(e.target.value))} />
-      </Field>
-    );
-  }
 }

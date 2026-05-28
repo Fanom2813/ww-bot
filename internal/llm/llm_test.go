@@ -17,8 +17,8 @@ type fakeProvider struct {
 	err       error
 }
 
-func (f *fakeProvider) Name() string                          { return f.name }
-func (f *fakeProvider) Available(context.Context) bool         { return f.available }
+func (f *fakeProvider) Name() string                   { return f.name }
+func (f *fakeProvider) Available(context.Context) bool { return f.available }
 func (f *fakeProvider) Complete(context.Context, Request) (string, error) {
 	return f.result, f.err
 }
@@ -52,13 +52,40 @@ func TestRegistryNoProvider(t *testing.T) {
 	}
 }
 
-func TestRegistryAllErrorReturnsFirst(t *testing.T) {
+func TestRegistryAllErrorReturnsJoined(t *testing.T) {
 	reg := NewRegistry(
 		&fakeProvider{name: "a", available: true, err: errors.New("first")},
 		&fakeProvider{name: "b", available: true, err: errors.New("second")},
 	)
-	if _, _, err := reg.Complete(context.Background(), Request{}); err == nil || err.Error() != "first" {
-		t.Fatalf("want first error, got %v", err)
+	_, _, err := reg.Complete(context.Background(), Request{})
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	msg := err.Error()
+	// Each attempt is tagged with its provider name and joined; both must appear.
+	if !strings.Contains(msg, "a: first") || !strings.Contains(msg, "b: second") {
+		t.Fatalf("want joined error mentioning both providers, got %q", msg)
+	}
+}
+
+func TestRegistryFallbackHook(t *testing.T) {
+	var used string
+	var failed []string
+	reg := NewRegistry(
+		&fakeProvider{name: "primary", available: true, err: errors.New("down")},
+		&fakeProvider{name: "secondary", available: true, result: "ok"},
+	)
+	reg.OnFallback = func(u string, attempts []Attempt) {
+		used = u
+		for _, a := range attempts {
+			failed = append(failed, a.Provider)
+		}
+	}
+	if _, who, err := reg.Complete(context.Background(), Request{}); err != nil || who != "secondary" {
+		t.Fatalf("want secondary to answer, got who=%q err=%v", who, err)
+	}
+	if used != "secondary" || len(failed) != 1 || failed[0] != "primary" {
+		t.Fatalf("OnFallback wrong: used=%q failed=%v", used, failed)
 	}
 }
 

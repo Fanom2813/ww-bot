@@ -23,15 +23,15 @@ const redactMark = "[redacted]"
 var (
 	// Well-known secret token shapes.
 	redactTokenPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)\bsk-[A-Za-z0-9_-]{16,}`),                       // OpenAI-style keys
-		regexp.MustCompile(`(?i)\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}`), // Stripe keys
-		regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),                              // AWS access key id
-		regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{16,}`),                          // Google API key
-		regexp.MustCompile(`(?i)\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}`),    // GitHub tokens
-		regexp.MustCompile(`(?i)\bxox[baprs]-[A-Za-z0-9-]{10,}`),                // Slack tokens
+		regexp.MustCompile(`(?i)\bsk-[A-Za-z0-9_-]{16,}`),                                  // OpenAI-style keys
+		regexp.MustCompile(`(?i)\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}`),            // Stripe keys
+		regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),                                         // AWS access key id
+		regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{16,}`),                                     // Google API key
+		regexp.MustCompile(`(?i)\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}`),               // GitHub tokens
+		regexp.MustCompile(`(?i)\bxox[baprs]-[A-Za-z0-9-]{10,}`),                           // Slack tokens
 		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), // JWT
-		regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._-]{16,}`),                // bearer tokens
-		regexp.MustCompile(`(?i)-----BEGIN[^-]+PRIVATE KEY-----`),               // PEM private key header
+		regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._-]{16,}`),                           // bearer tokens
+		regexp.MustCompile(`(?i)-----BEGIN[^-]+PRIVATE KEY-----`),                          // PEM private key header
 	}
 	// "password is X", "otp: 123456", "api key = X" → keep the label, drop value.
 	redactLabelValue = regexp.MustCompile(`(?i)\b(password|passcode|passphrase|pwd|pin|otp|cvv|cvc|secret|token|api[ _-]?key|seed phrase|private key)\b\s*(?:is\s+|are\s+|:\s*|=\s*|->\s*|=>\s*)([^\s,;]+)`)

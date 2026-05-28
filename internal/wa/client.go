@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -24,12 +23,21 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
+
+	"wwbot/internal/dbg"
 )
 
 // WAContact is a synced address-book contact from WhatsApp.
 type WAContact struct {
 	JID  string `json:"jid"`
 	Name string `json:"name"`
+}
+
+// WAGroup is a group chat the account is a member of.
+type WAGroup struct {
+	JID          string `json:"jid"`
+	Name         string `json:"name"`
+	Participants int    `json:"participants"`
 }
 
 // Config configures a Client.
@@ -169,6 +177,34 @@ func (c *Client) Contacts(ctx context.Context) ([]WAContact, error) {
 	return out, nil
 }
 
+// Groups returns the WhatsApp groups the account is a member of, sorted by
+// name. Returns nil if not paired.
+func (c *Client) Groups(ctx context.Context) ([]WAGroup, error) {
+	if c.wm.Store.ID == nil {
+		return nil, nil
+	}
+	gs, err := c.wm.GetJoinedGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("wa: get joined groups: %w", err)
+	}
+	out := make([]WAGroup, 0, len(gs))
+	for _, g := range gs {
+		name := g.Name
+		if strings.TrimSpace(name) == "" {
+			name = g.JID.User
+		}
+		out = append(out, WAGroup{
+			JID:          g.JID.String(),
+			Name:         name,
+			Participants: g.ParticipantCount,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out, nil
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if strings.TrimSpace(v) != "" {
@@ -231,9 +267,13 @@ func (c *Client) onEvent(raw any) {
 		if s := v.Info.Chat.Server; s == types.BroadcastServer || s == types.NewsletterServer {
 			return
 		}
-		log.Printf("[wa] message chat=%q sender=%q fromMe=%v type=%s",
+		dbg.Printf("[wa] message chat=%q sender=%q fromMe=%v type=%s",
 			v.Info.Chat.String(), v.Info.Sender.String(), v.Info.IsFromMe, v.Info.Type)
-		m := toMessage(v)
+		self := ""
+		if c.wm.Store.ID != nil {
+			self = c.wm.Store.ID.ToNonAD().String()
+		}
+		m := toMessage(v, self)
 		if am := v.Message.GetAudioMessage(); am != nil {
 			// Download voice-note bytes so consumers can transcribe them.
 			dctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -261,17 +301,21 @@ func (c *Client) onEvent(raw any) {
 	case *events.LoggedOut:
 		// Genuine server-side logout only (401/403/406 or stream error) — never
 		// fired for network loss. Log the reason so it's clear why re-pair is needed.
-		log.Printf("[wa] LOGGED OUT by WhatsApp (onConnect=%v reason=%v) — session invalidated", v.OnConnect, v.Reason)
+		dbg.Printf("[wa] LOGGED OUT by WhatsApp (onConnect=%v reason=%v) — session invalidated", v.OnConnect, v.Reason)
 		c.emit(LoggedOut{})
 	}
 }
 
 func (c *Client) emit(e Event) { c.events <- e }
 
-func toMessage(v *events.Message) Message {
+func toMessage(v *events.Message, selfJID string) Message {
 	text := v.Message.GetConversation()
+	var mentioned []string
 	if ext := v.Message.GetExtendedTextMessage(); ext != nil {
 		text = ext.GetText()
+		if ci := ext.GetContextInfo(); ci != nil {
+			mentioned = ci.GetMentionedJID()
+		}
 	}
 	kind := KindOther
 	switch {
@@ -282,14 +326,26 @@ func toMessage(v *events.Message) Message {
 	case v.Message.GetImageMessage() != nil:
 		kind = KindImage
 	}
+	mentionsMe := false
+	if selfJID != "" {
+		// WhatsApp puts mentions in the @s.whatsapp.net form; normalize to NonAD
+		// (number@server) on both sides for the comparison.
+		for _, m := range mentioned {
+			if mj, err := types.ParseJID(m); err == nil && mj.ToNonAD().String() == selfJID {
+				mentionsMe = true
+				break
+			}
+		}
+	}
 	return Message{
-		ChatJID:   v.Info.Chat.String(),
-		SenderJID: v.Info.Sender.String(),
-		PushName:  v.Info.PushName,
-		Kind:      kind,
-		Text:      text,
-		Timestamp: v.Info.Timestamp,
-		IsFromMe:  v.Info.IsFromMe,
-		IsGroup:   v.Info.IsGroup,
+		ChatJID:    v.Info.Chat.String(),
+		SenderJID:  v.Info.Sender.String(),
+		PushName:   v.Info.PushName,
+		Kind:       kind,
+		Text:       text,
+		Timestamp:  v.Info.Timestamp,
+		IsFromMe:   v.Info.IsFromMe,
+		IsGroup:    v.Info.IsGroup,
+		MentionsMe: mentionsMe,
 	}
 }

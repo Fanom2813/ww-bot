@@ -51,6 +51,9 @@ type Message struct {
 	Timestamp time.Time
 	IsFromMe  bool
 	IsGroup   bool
+	// MentionsMe is true when the message text @-mentions the bot's own number.
+	// Used to honour the "mentions only" group opt-in mode.
+	MentionsMe bool
 	// AudioData holds the decrypted bytes of a voice note (Kind == KindVoice),
 	// downloaded eagerly so consumers can transcribe it. Empty otherwise.
 	AudioData []byte
@@ -65,11 +68,11 @@ type Call struct {
 	Group   bool
 }
 
-func (QR) isWAEvent()            {}
-func (Paired) isWAEvent()        {}
-func (Connected) isWAEvent()     {}
-func (Disconnected) isWAEvent()  {}
-func (LoggedOut) isWAEvent()     {}
+func (QR) isWAEvent()             {}
+func (Paired) isWAEvent()         {}
+func (Connected) isWAEvent()      {}
+func (Disconnected) isWAEvent()   {}
+func (LoggedOut) isWAEvent()      {}
 func (PairingExpired) isWAEvent() {}
-func (Message) isWAEvent()       {}
-func (Call) isWAEvent()          {}
+func (Message) isWAEvent()        {}
+func (Call) isWAEvent()           {}

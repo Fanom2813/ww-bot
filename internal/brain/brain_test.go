@@ -16,7 +16,7 @@ type fakeLLM struct {
 	lastReq llm.Request
 }
 
-func (f *fakeLLM) Name() string                  { return "fake" }
+func (f *fakeLLM) Name() string                   { return "fake" }
 func (f *fakeLLM) Available(context.Context) bool { return true }
 func (f *fakeLLM) Complete(_ context.Context, req llm.Request) (string, error) {
 	f.called = true

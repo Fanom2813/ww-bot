@@ -47,14 +47,10 @@ function numberOf(jid: string): string {
 type DialogState = { contact: Contact; jidEditable: boolean } | null;
 
 export function Contacts() {
-  const [managed, setManaged] = useState<Contact[]>([]);
-  const [waContacts, setWaContacts] = useState<{ jid: string; name: string }[]>([]);
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "added" | "not">("all");
+  const [contactsData, setContactsData] = useState({ managed: [] as Contact[], wa: [] as { jid: string; name: string }[] });
+  const [search, setSearch] = useState({ query: "", filter: "all" as "all" | "added" | "not" });
   const [loading, setLoading] = useState(true);
-  const [dialog, setDialog] = useState<DialogState>(null);
-  const [proactive, setProactive] = useState<{ jid: string; name: string } | null>(null);
-  const [scheduleTask, setScheduleTask] = useState<ScheduledTask | null>(null);
+  const [ui, setUi] = useState({ dialog: null as DialogState, proactive: null as { jid: string; name: string } | null, scheduleTask: null as ScheduledTask | null });
 
   const load = useCallback(() => {
     setLoading(true);
@@ -63,8 +59,7 @@ export function Contacts() {
       WhatsAppService.Contacts().catch(() => [] as { jid: string; name: string }[]),
     ])
       .then(([m, w]) => {
-        setManaged(m ?? []);
-        setWaContacts(w ?? []);
+        setContactsData({ managed: m ?? [], wa: w ?? [] });
       })
       .catch((e) => toast.error("Couldn't load contacts", { description: String(e) }))
       .finally(() => setLoading(false));
@@ -72,6 +67,7 @@ export function Contacts() {
   useEffect(load, [load]);
 
   const rows = useMemo<Row[]>(() => {
+    const { managed, wa: waContacts } = contactsData;
     const byJid = new Map<string, Contact>();
     managed.forEach((m) => byJid.set(m.jid, m));
     const seen = new Set<string>();
@@ -86,30 +82,30 @@ export function Contacts() {
     managed.forEach((m) => {
       if (!seen.has(m.jid)) out.push({ jid: m.jid, name: m.name || numberOf(m.jid), managed: m });
     });
-    const q = query.trim().toLowerCase();
+    const q = search.query.trim().toLowerCase();
     const filtered = out.filter((r) => {
-      if (filter === "added" && !r.managed) return false;
-      if (filter === "not" && r.managed) return false;
+      if (search.filter === "added" && !r.managed) return false;
+      if (search.filter === "not" && r.managed) return false;
       if (q && !(r.name.toLowerCase().includes(q) || r.jid.toLowerCase().includes(q))) return false;
       return true;
     });
     return filtered.sort((a, b) => a.name.localeCompare(b.name));
-  }, [managed, waContacts, query, filter]);
+  }, [contactsData, search]);
 
   const addManual = () =>
-    setDialog({
+    setUi((u) => ({ ...u, dialog: {
       contact: new Contact({ jid: "", name: "", tier: "draft" as Contact["tier"] }),
       jidEditable: true,
-    });
+    }}));
 
   const openRow = (r: Row) =>
-    setDialog({
+    setUi((u) => ({ ...u, dialog: {
       contact: r.managed ?? new Contact({ jid: r.jid, name: r.name, tier: "draft" as Contact["tier"] }),
       jidEditable: false,
-    });
+    }}));
 
   const openSchedule = (r: Row) =>
-    setScheduleTask(
+    setUi((u) => ({ ...u, scheduleTask:
       new ScheduledTask({
         id: newId(),
         label: `Message ${r.name}`,
@@ -119,11 +115,11 @@ export function Contacts() {
         prompt: "",
         enabled: true,
       } as ScheduledTask),
-    );
+    }));
 
   // saveSchedule appends the new task to the existing list and persists it.
   const saveSchedule = (t: ScheduledTask) => {
-    setScheduleTask(null);
+    setUi((u) => ({ ...u, scheduleTask: null }));
     ScheduleService.List()
       .then((existing) => ScheduleService.Save([...(existing ?? []), t]))
       .then(() => toast.success("Schedule created", { description: "Manage it on the Schedules page." }))
@@ -132,7 +128,7 @@ export function Contacts() {
 
   const pickerContacts = useMemo(() => rows.map((r) => ({ jid: r.jid, name: r.name })), [rows]);
 
-  const managedCount = managed.length;
+  const managedCount = contactsData.managed.length;
 
   const columns = useMemo<Column<Row>[]>(
     () => [
@@ -168,7 +164,7 @@ export function Contacts() {
                 <span className="sr-only">Actions</span>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-44">
-                <DropdownMenuItem onClick={() => setProactive({ jid: r.jid, name: r.name })}>
+                <DropdownMenuItem onClick={() => setUi((u) => ({ ...u, proactive: { jid: r.jid, name: r.name } }))}>
                   <MessageCirclePlus className="size-4" /> Reach out now
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => openSchedule(r)}>
@@ -197,6 +193,7 @@ export function Contacts() {
 
   return (
     <Page
+      fill
       title="Contacts"
       description={`Your WhatsApp contacts — add the ones the bot should manage. ${managedCount} managed.`}
       actions={
@@ -210,10 +207,10 @@ export function Contacts() {
         rows={rows}
         rowKey={(r) => r.jid}
         loading={loading}
-        search={{ value: query, onChange: setQuery, placeholder: "Search name or number…" }}
+        search={{ value: search.query, onChange: (v) => setSearch((s) => ({ ...s, query: v })), placeholder: "Search name or number…" }}
         filter={{
-          value: filter,
-          onChange: (v) => setFilter(v as typeof filter),
+          value: search.filter,
+          onChange: (v) => setSearch((s) => ({ ...s, filter: v as typeof search.filter })),
           label: "All",
           options: [
             { value: "all", label: "All" },
@@ -222,25 +219,25 @@ export function Contacts() {
           ],
         }}
         empty={
-          query || filter !== "all"
+          search.query || search.filter !== "all"
             ? "No contacts match your filters."
-            : "No contacts synced yet. Use “Add contact” to add one manually."
+            : 'No contacts synced yet. Use "Add contact" to add one manually.'
         }
       />
 
       <ContactDialog
-        contact={dialog?.contact ?? null}
-        jidEditable={dialog?.jidEditable ?? false}
-        onClose={() => setDialog(null)}
+        contact={ui.dialog?.contact ?? null}
+        jidEditable={ui.dialog?.jidEditable ?? false}
+        onClose={() => setUi((u) => ({ ...u, dialog: null }))}
         onSaved={load}
       />
 
-      <ProactiveDialog target={proactive} onClose={() => setProactive(null)} />
+      <ProactiveDialog key={ui.proactive?.jid ?? "closed"} target={ui.proactive} onClose={() => setUi((u) => ({ ...u, proactive: null }))} />
 
       <ScheduleDialog
-        task={scheduleTask}
+        task={ui.scheduleTask}
         contacts={pickerContacts}
-        onClose={() => setScheduleTask(null)}
+        onClose={() => setUi((u) => ({ ...u, scheduleTask: null }))}
         onSave={saveSchedule}
       />
     </Page>

@@ -5,13 +5,14 @@ export {
   ApprovalsService,
   ContactsService,
   ControlService,
+  GroupsService,
   ScheduleService,
   SettingsService,
   WhatsAppService,
 } from "../../bindings/wwbot";
 
-export { Contact, Draft, Activity } from "../../bindings/wwbot/internal/store/models";
-export { WAContact } from "../../bindings/wwbot/internal/wa/models";
+export { Contact, Draft, Activity, Group } from "../../bindings/wwbot/internal/store/models";
+export { WAContact, WAGroup } from "../../bindings/wwbot/internal/wa/models";
 export {
   Settings,
   ProviderSetting,

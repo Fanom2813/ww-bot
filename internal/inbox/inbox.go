@@ -13,14 +13,15 @@ import (
 
 // Msg is a normalized inbound message handed to the debouncer.
 type Msg struct {
-	ChatJID   string
-	SenderJID string
-	PushName  string
-	Text      string
-	Kind      string // text | voice | image | other
-	IsFromMe  bool
-	IsGroup   bool
-	Timestamp time.Time
+	ChatJID    string
+	SenderJID  string
+	PushName   string
+	Text       string
+	Kind       string // text | voice | image | other
+	IsFromMe   bool
+	IsGroup    bool
+	MentionsMe bool // group messages: bot's own number was @-mentioned
+	Timestamp  time.Time
 }
 
 // Batch is a coalesced burst of messages to respond to.

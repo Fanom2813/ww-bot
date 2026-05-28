@@ -12,6 +12,9 @@ package llm
 import (
 	"context"
 	"errors"
+	"time"
+
+	"wwbot/internal/dbg"
 )
 
 // Role identifies who authored a message.
@@ -62,9 +65,23 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// Attempt records one provider's outcome during a Complete call (for telemetry
+// and richer error messages when the chain falls back).
+type Attempt struct {
+	Provider string
+	Err      error
+}
+
+// FallbackHook is invoked after a Complete call that succeeded on a non-primary
+// provider. `used` is the provider that answered; `attempts` lists the failed
+// providers (in order) that came before it.
+type FallbackHook func(used string, attempts []Attempt)
+
 // Registry holds providers in preference order (highest priority first).
 type Registry struct {
-	providers []Provider
+	providers         []Provider
+	OnFallback        FallbackHook  // optional: called when a non-primary answered
+	PerAttemptTimeout time.Duration // optional: per-provider deadline (default 60s)
 }
 
 // NewRegistry builds a registry from providers in preference order.
@@ -87,24 +104,59 @@ func (r *Registry) Available(ctx context.Context) []Provider {
 }
 
 // Complete tries each available provider in order, returning the first success
-// along with the provider name that answered. If all fail, it returns the first
-// error encountered; if none are available, ErrNoProvider.
+// along with the provider name that answered. Each provider gets its own
+// PerAttemptTimeout so one stuck backend can't block the chain. On every
+// failure the attempt is logged (with the provider's name) and recorded; on
+// success after one or more failures, OnFallback fires so the UI can surface
+// it. If all available providers fail, the returned error wraps each attempt
+// (via errors.Join). If none are available at all, returns ErrNoProvider.
 func (r *Registry) Complete(ctx context.Context, req Request) (text, provider string, err error) {
-	var firstErr error
+	timeout := r.PerAttemptTimeout
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+
+	var attempts []Attempt
+	primary := ""
+
 	for _, p := range r.providers {
 		if !p.Available(ctx) {
 			continue
 		}
-		out, perr := p.Complete(ctx, req)
+		if primary == "" {
+			primary = p.Name()
+		}
+
+		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+		out, perr := p.Complete(attemptCtx, req)
+		cancel()
+
 		if perr == nil {
+			if p.Name() != primary && r.OnFallback != nil {
+				r.OnFallback(p.Name(), attempts)
+			}
 			return out, p.Name(), nil
 		}
-		if firstErr == nil {
-			firstErr = perr
-		}
+		dbg.Printf("[llm] provider %q failed: %v", p.Name(), perr)
+		attempts = append(attempts, Attempt{Provider: p.Name(), Err: perr})
 	}
-	if firstErr != nil {
-		return "", "", firstErr
+
+	if len(attempts) == 0 {
+		return "", "", ErrNoProvider
 	}
-	return "", "", ErrNoProvider
+	// Wrap every attempt so the caller can see what each provider returned.
+	errs := make([]error, len(attempts))
+	for i, a := range attempts {
+		errs[i] = &attemptError{Provider: a.Provider, Err: a.Err}
+	}
+	return "", "", errors.Join(errs...)
 }
+
+// attemptError tags an error with the provider name that produced it.
+type attemptError struct {
+	Provider string
+	Err      error
+}
+
+func (e *attemptError) Error() string { return e.Provider + ": " + e.Err.Error() }
+func (e *attemptError) Unwrap() error { return e.Err }

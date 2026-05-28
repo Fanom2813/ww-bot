@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   Settings as SettingsIcon,
   Users,
+  UsersRound,
 } from "lucide-react";
 import type { Route } from "@/components/sidebar-02/nav-main";
 import DashboardNavigation from "@/components/sidebar-02/nav-main";
@@ -23,6 +24,7 @@ const dashboardRoutes: Route[] = [
   { id: "dashboard", title: "Dashboard", icon: <LayoutDashboard className="size-4" />, to: "/", end: true },
   { id: "approvals", title: "Approvals", icon: <Inbox className="size-4" />, to: "/approvals" },
   { id: "contacts", title: "Contacts", icon: <Users className="size-4" />, to: "/contacts" },
+  { id: "groups", title: "Groups", icon: <UsersRound className="size-4" />, to: "/groups" },
   { id: "schedules", title: "Schedules", icon: <CalendarClock className="size-4" />, to: "/schedules" },
   { id: "activity", title: "Activity", icon: <ActivityIcon className="size-4" />, to: "/activity" },
   { id: "settings", title: "Settings", icon: <SettingsIcon className="size-4" />, to: "/settings" },
@@ -56,7 +58,7 @@ export function DashboardSidebar({ jid, paused, online, isMac, onLogout }: Props
           isMac ? "pt-12" : "md:pt-3.5",
         )}
       >
-        <a className="flex items-center gap-2 overflow-hidden">
+        <a href="/" className="flex items-center gap-2 overflow-hidden">
           <img src="/logo.png" alt="WW Bot" className="size-8 shrink-0 rounded-lg" />
           {!isCollapsed && <span className="font-semibold">WW Bot</span>}
         </a>
