@@ -1,9 +1,27 @@
 package main
 
 import (
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 )
+
+// setupFileLogging mirrors stdlib log output to ww-bot.log in the app data
+// dir. With -H windowsgui the OS gives us no console, so log.Fatal failures
+// are otherwise invisible. Best-effort: silently skip if the dir is unavailable.
+func setupFileLogging() {
+	d, err := appDir()
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(d, "ww-bot.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
+}
 
 // appDir returns (and creates) the per-user data directory, e.g.
 // ~/Library/Application Support/ww-bot on macOS.

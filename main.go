@@ -33,6 +33,8 @@ func init() {
 }
 
 func main() {
+	setupFileLogging()
+
 	ctx := context.Background()
 
 	// Open the app data store.
