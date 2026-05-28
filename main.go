@@ -83,7 +83,7 @@ func main() {
 	})
 
 	// Auto-update: check GitHub Releases for newer versions.
-	gh, err := github.New(github.Config{Repository: "fanom2813/ww-bot", Token: "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"})
+	gh, err := github.New(github.Config{Repository: "fanom2813/ww-bot"})
 	if err != nil {
 		log.Printf("updater: %v", err)
 	} else {
