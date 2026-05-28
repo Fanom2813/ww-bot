@@ -49,17 +49,19 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
     !define SUPPORTS_ARM64
 !endif
 
-!ifdef SUPPORTS_AMD64
-    !ifdef SUPPORTS_ARM64
-        !define ARCH "amd64_arm64"
+!ifndef ARCH
+    !ifdef SUPPORTS_AMD64
+        !ifdef SUPPORTS_ARM64
+            !define ARCH "amd64_arm64"
+        !else
+            !define ARCH "amd64"
+        !endif
     !else
-        !define ARCH "amd64"
-    !endif
-!else
-    !ifdef SUPPORTS_ARM64
-        !define ARCH "arm64"
-    !else
-        !error "Wails: Undefined ARCH, please provide at least one of ARG_WAILS_AMD64_BINARY or ARG_WAILS_ARM64_BINARY"
+        !ifdef SUPPORTS_ARM64
+            !define ARCH "arm64"
+        !else
+            !error "Wails: Undefined ARCH, please provide at least one of ARG_WAILS_AMD64_BINARY or ARG_WAILS_ARM64_BINARY"
+        !endif
     !endif
 !endif
 
