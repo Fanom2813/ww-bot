@@ -48,7 +48,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WW-Bot-macOS
-          path: bin/WW Bot.app
+          path: bin/ww-bot.app
 
       - name: Upload Windows artifact
         if: matrix.target == 'windows'
@@ -68,7 +68,7 @@ jobs:
       - name: Create ZIP archives
         run: |
           cd artifacts
-          zip -r ../WW-Bot-macOS.zip "WW-Bot-macOS/WW Bot.app"
+          zip -r ../WW-Bot-macOS.zip "WW-Bot-macOS/ww-bot.app"
           cd ../artifacts/WW-Bot-Windows
           zip ../../WW-Bot-Windows.zip ww-bot.exe
 
