@@ -6,7 +6,7 @@ vars:
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "bun"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
   VERSION:
-    sh: grep '^  version:' build/config.yml | head -1 | sed 's/.*: *"\(.*\)".*/\1/'
+    sh: 'grep "^  version:" build/config.yml | head -1 | sed "s/.*: *\"\\(.*\\)\".*/\\1/"'
 
 includes:
   common: ./build/Taskfile.yml

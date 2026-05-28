@@ -23,7 +23,7 @@ import (
 var assets embed.FS
 
 // version is set via -ldflags "-X main.version=..." at build time.
-var version = "1.0.0"
+var version = "0.0.1"
 
 func init() {
 	// Register event types so the binding generator emits typed JS/TS APIs.
