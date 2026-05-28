@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ControlService } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -15,35 +15,25 @@ import {
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSaved?: () => void;
 };
 
-/**
- * TodayContextDialog edits the bot's "today's context". It loads the current
- * value when opened and persists on save.
- */
-export function TodayContextDialog({ open, onOpenChange }: Props) {
+export function TodayContextDialog({ open, onOpenChange, onSaved }: Props) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
-  const loadedRef = useRef(false);
 
-  const handleOpenChange = useCallback((nextOpen: boolean) => {
-    if (nextOpen && !loadedRef.current) {
-      loadedRef.current = true;
-      ControlService.Today()
-        .then(setText)
-        .catch(() => {});
+  useEffect(() => {
+    if (open) {
+      ControlService.Today().then(setText).catch(() => {});
     }
-    if (!nextOpen) {
-      loadedRef.current = false;
-    }
-    onOpenChange(nextOpen);
-  }, [onOpenChange]);
+  }, [open]);
 
   const save = () => {
     setSaving(true);
     ControlService.SetToday(text)
       .then(() => {
         toast.success("Today's context saved");
+        onSaved?.();
         onOpenChange(false);
       })
       .catch((e) => toast.error("Couldn't save", { description: String(e) }))
@@ -51,7 +41,7 @@ export function TodayContextDialog({ open, onOpenChange }: Props) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !saving && handleOpenChange(o)}>
+    <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Today's context</DialogTitle>

@@ -24,3 +24,7 @@ data/
 # macOS
 .DS_Store
 frontend/frontend/
+
+# Compiled binaries
+wwbot
+*.exe

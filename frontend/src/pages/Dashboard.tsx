@@ -91,6 +91,8 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
+    loadActions();
+    loadRecent();
     // Live updates: new unknown contact → refresh actions; new activity row →
     // refresh the recent feed and today count.
     const offUnknown = Events.On("unknown", () => loadActions());
@@ -122,7 +124,7 @@ export function Dashboard() {
       .catch(() => {});
 
   const actionsCount = data.drafts.length + data.pendingNew.length;
-  const { status, paused } = botStatus;
+  const { paused } = botStatus;
   const { pending, today } = counts;
   const { drafts, pendingNew, recent } = data;
   const { saving, todayOpen } = ui;
@@ -154,13 +156,12 @@ export function Dashboard() {
             {
               label: "Status",
               value: paused ? "Paused" : "Active",
-              hint: status,
               tone: paused ? "negative" : "positive",
             },
             {
               label: "Pending approvals",
               value: pending,
-              hint: pending > 0 ? "needs review" : "clear",
+              hint: pending > 0 ? "needs review" : undefined,
               tone: pending > 0 ? "negative" : "positive",
             },
             {
@@ -177,13 +178,19 @@ export function Dashboard() {
         />
 
         {/* Today's context */}
-        {todayContext && (
-          <Card>
-            <CardContent className="pt-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Today's context</CardTitle>
+            <p className="text-xs text-muted-foreground">What the bot knows about your day so it replies naturally.</p>
+          </CardHeader>
+          <CardContent>
+            {todayContext ? (
               <p className="text-sm whitespace-pre-wrap">{todayContext}</p>
-            </CardContent>
-          </Card>
-        )}
+            ) : (
+              <p className="text-sm text-muted-foreground">No context set for today.</p>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Actions needed + Recent activity, side by side on wide screens */}
         <div className="grid gap-4 lg:grid-cols-2">
@@ -298,7 +305,11 @@ export function Dashboard() {
         onSaved={loadActions}
       />
 
-      <TodayContextDialog open={todayOpen} onOpenChange={(o) => setUi((u) => ({ ...u, todayOpen: o }))} />
+      <TodayContextDialog
+        open={todayOpen}
+        onOpenChange={(o) => setUi((u) => ({ ...u, todayOpen: o }))}
+        onSaved={() => ControlService.Today().then(setTodayContext).catch(() => {})}
+      />
     </Page>
   );
 }

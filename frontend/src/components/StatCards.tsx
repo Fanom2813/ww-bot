@@ -27,12 +27,12 @@ export function StatCards({ items }: { items: Stat[] }) {
   return (
     <div
       className={cn(
-        "grid grid-cols-1 gap-px overflow-hidden rounded-xl bg-border sm:grid-cols-2",
+        "grid grid-cols-1 gap-2 sm:grid-cols-2",
         COLS[items.length] ?? "lg:grid-cols-3",
       )}
     >
       {items.map((stat) => (
-        <Card key={stat.label} className="rounded-none border-0 py-0 shadow-none">
+        <Card key={stat.label} className="py-0">
           <CardContent className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 p-4 sm:p-5">
             <div className="text-sm font-medium text-muted-foreground">{stat.label}</div>
             {stat.hint && (

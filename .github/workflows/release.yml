@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            target: darwin
+          - runner: windows-latest
+            target: windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+
+      - name: Extract version
+        id: ver
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (macOS)
+        if: matrix.target == 'darwin'
+        run: wails3 task darwin:package:universal
+
+      - name: Build (Windows)
+        if: matrix.target == 'windows'
+        run: wails3 task windows:package
+
+      - name: Upload macOS artifact
+        if: matrix.target == 'darwin'
+        uses: actions/upload-artifact@v4
+        with:
+          name: WW-Bot-macOS
+          path: bin/WW Bot.app
+
+      - name: Upload Windows artifact
+        if: matrix.target == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: WW-Bot-Windows
+          path: bin/ww-bot.exe
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create ZIP archives
+        run: |
+          cd artifacts
+          zip -r ../WW-Bot-macOS.zip "WW-Bot-macOS/WW Bot.app"
+          cd ../artifacts/WW-Bot-Windows
+          zip ../../WW-Bot-Windows.zip ww-bot.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            WW-Bot-macOS.zip
+            WW-Bot-Windows.zip
+          generate_release_notes: true

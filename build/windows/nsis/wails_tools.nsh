@@ -8,16 +8,16 @@
     !define INFO_PROJECTNAME "ww-bot"
 !endif
 !ifndef INFO_COMPANYNAME
-    !define INFO_COMPANYNAME "ww-bot"
+    !define INFO_COMPANYNAME "WW Bot"
 !endif
 !ifndef INFO_PRODUCTNAME
     !define INFO_PRODUCTNAME "WW Bot"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "0.1.0"
+    !define INFO_PRODUCTVERSION "1.0.0"
 !endif
 !ifndef INFO_COPYRIGHT
-    !define INFO_COPYRIGHT "© 2026, My Company"
+    !define INFO_COPYRIGHT "© 2025 WW Bot"
 !endif
 !ifndef PRODUCT_EXECUTABLE
     !define PRODUCT_EXECUTABLE "${INFO_PROJECTNAME}.exe"

@@ -10,6 +10,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 	"github.com/wailsapp/wails/v3/pkg/services/dock"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
+	"github.com/wailsapp/wails/v3/pkg/updater"
+	"github.com/wailsapp/wails/v3/pkg/updater/providers/github"
 
 	"wwbot/internal/core"
 	"wwbot/internal/store"
@@ -19,6 +21,9 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// version is set via -ldflags "-X main.version=..." at build time.
+var version = "1.0.0"
 
 func init() {
 	// Register event types so the binding generator emits typed JS/TS APIs.
@@ -76,6 +81,17 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 	})
+
+	// Auto-update: check GitHub Releases for newer versions.
+	gh, err := github.New(github.Config{Repository: "fanom2813/ww-bot"})
+	if err != nil {
+		log.Printf("updater: %v", err)
+	} else {
+		app.Updater.Init(updater.Config{
+			CurrentVersion: version,
+			Providers:      []updater.Provider{gh},
+		})
+	}
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "WW Bot",
@@ -144,6 +160,10 @@ func setupTray(app *application.App, win *application.WebviewWindow, cr *core.Co
 		}
 	})
 
+	menu.AddSeparator()
+	menu.Add("Check for Updates…").OnClick(func(*application.Context) {
+		app.Updater.Check(context.Background())
+	})
 	menu.AddSeparator()
 	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
 
