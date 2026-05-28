@@ -38,19 +38,22 @@ func appDir() (string, error) {
 }
 
 // sessionDSN is the SQLite DSN for the encrypted WhatsApp session store.
+// Uses modernc.org/sqlite _pragma= syntax (mattn-style params are ignored).
 func sessionDSN() string {
+	const params = "?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
 	d, err := appDir()
 	if err != nil {
-		return "file:wwbot-session.db?_foreign_keys=on"
+		return "file:wwbot-session.db" + params
 	}
-	return "file:" + filepath.Join(d, "session.db") + "?_foreign_keys=on"
+	return "file:" + filepath.Join(d, "session.db") + params
 }
 
 // dataDSN is the SQLite DSN for the app data store (contacts, drafts, etc.).
 func dataDSN() string {
+	const params = "?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	d, err := appDir()
 	if err != nil {
-		return "file:wwbot-data.db?_foreign_keys=on&_busy_timeout=5000"
+		return "file:wwbot-data.db" + params
 	}
-	return "file:" + filepath.Join(d, "data.db") + "?_foreign_keys=on&_busy_timeout=5000&_journal_mode=WAL"
+	return "file:" + filepath.Join(d, "data.db") + params
 }
