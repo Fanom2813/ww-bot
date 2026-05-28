@@ -11,6 +11,7 @@ jobs:
   release:
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: macos-latest
@@ -19,9 +20,6 @@ jobs:
           - runner: windows-latest
             target: windows
             arch: amd64
-          - runner: windows-latest
-            target: windows
-            arch: 386
 
     steps:
       - uses: actions/checkout@v4
@@ -88,5 +86,4 @@ jobs:
           files: |
             artifacts/WW-Bot-macOS/ww-bot.dmg
             artifacts/WW-Bot-Windows-amd64/ww-bot-amd64-installer.exe
-            artifacts/WW-Bot-Windows-386/ww-bot-386-installer.exe
           generate_release_notes: true
