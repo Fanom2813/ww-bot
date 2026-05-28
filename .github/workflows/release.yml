@@ -30,16 +30,15 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@latest
 
-      - name: Extract version
-        id: ver
-        shell: bash
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Install NSIS (Windows)
+        if: matrix.target == 'windows'
+        run: choco install nsis -y
 
-      - name: Build (macOS)
+      - name: Build macOS DMG
         if: matrix.target == 'darwin'
-        run: wails3 task darwin:package:universal
+        run: wails3 task darwin:dmg:universal
 
-      - name: Build (Windows)
+      - name: Build Windows installer
         if: matrix.target == 'windows'
         run: wails3 task windows:package
 
@@ -48,14 +47,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WW-Bot-macOS
-          path: bin/ww-bot.app
+          path: bin/ww-bot.dmg
 
       - name: Upload Windows artifact
         if: matrix.target == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: WW-Bot-Windows
-          path: bin/ww-bot.exe
+          path: bin/ww-bot-amd64-installer.exe
 
   publish:
     needs: release
@@ -65,17 +64,10 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create ZIP archives
-        run: |
-          cd artifacts
-          zip -r ../WW-Bot-macOS.zip "WW-Bot-macOS/ww-bot.app"
-          cd ../artifacts/WW-Bot-Windows
-          zip ../../WW-Bot-Windows.zip ww-bot.exe
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            WW-Bot-macOS.zip
-            WW-Bot-Windows.zip
+            artifacts/WW-Bot-macOS/ww-bot.dmg
+            artifacts/WW-Bot-Windows/ww-bot-amd64-installer.exe
           generate_release_notes: true

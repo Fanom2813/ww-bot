@@ -132,6 +132,30 @@ tasks:
     cmds:
       - task: create:app:bundle
 
+  dmg:
+    summary: Creates a DMG installer from the .app bundle
+    deps:
+      - task: package
+    cmds:
+      - task: create:dmg
+
+  dmg:universal:
+    summary: Creates a DMG installer from the universal .app bundle
+    deps:
+      - task: package:universal
+    cmds:
+      - task: create:dmg
+
+  create:dmg:
+    summary: Creates a DMG with Applications symlink for drag-to-install
+    internal: true
+    cmds:
+      - mkdir -p "{{.BIN_DIR}}/dmg-staging"
+      - cp -R "{{.BIN_DIR}}/{{.APP_NAME}}.app" "{{.BIN_DIR}}/dmg-staging/"
+      - ln -s /Applications "{{.BIN_DIR}}/dmg-staging/Applications"
+      - hdiutil create -volname "{{.APP_NAME}}" -srcfolder "{{.BIN_DIR}}/dmg-staging" -ov -format UDZO "{{.BIN_DIR}}/{{.APP_NAME}}.dmg"
+      - rm -rf "{{.BIN_DIR}}/dmg-staging"
+
 
   create:app:bundle:
     summary: Creates an `.app` bundle
