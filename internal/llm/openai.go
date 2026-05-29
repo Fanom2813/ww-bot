@@ -75,7 +75,11 @@ func (o *OpenAICompatible) Complete(ctx context.Context, req Request) (string, e
 		params.Temperature = openai.Float(req.Temperature)
 	}
 	if req.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(req.MaxTokens))
+		// max_completion_tokens replaces max_tokens; the older field is
+		// deprecated and is silently *ignored* by o-series reasoning models,
+		// which is why we were seeing empty replies + finish_reason=length on
+		// OpenRouter when the route picked a reasoning model.
+		params.MaxCompletionTokens = openai.Int(int64(req.MaxTokens))
 	}
 	if req.JSON {
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
