@@ -88,8 +88,14 @@ func CodexCLI() *CLIAgent {
 // refuses to run in an "untrusted" workspace in headless mode; we set
 // GEMINI_CLI_TRUST_WORKSPACE=true (safe because cmd.Dir is an empty,
 // app-owned sandbox that has no .gemini/.env/.toml/MCP config to load).
+// GeminiCLI runs Gemini in headless mode for a direct text reply. We do NOT
+// pass --approval-mode plan: that makes the model deliberate and slows replies
+// down. In headless -p mode without an approval flag, the CLI errors out if it
+// tries any tool (there's no interactive prompt to approve), so we still can't
+// be tricked into OS-level actions. GEMINI_CLI_TRUST_WORKSPACE=true is safe
+// because cmd.Dir is an empty, app-owned sandbox with no project config.
 func GeminiCLI() *CLIAgent {
-	a := NewCLIAgent("gemini-cli", "gemini", []string{"-p", "--approval-mode", "plan"}, false)
+	a := NewCLIAgent("gemini-cli", "gemini", []string{"-p"}, false)
 	a.extraEnv = []string{"GEMINI_CLI_TRUST_WORKSPACE=true"}
 	return a
 }
