@@ -19,6 +19,13 @@ type UnknownContact struct {
 	Preview string `json:"preview"`
 }
 
+// ReachOut is pushed on "tray:reach-out" when the user picks a contact from
+// the tray submenu, so the frontend opens the proactive dialog for them.
+type ReachOut struct {
+	JID  string `json:"jid"`
+	Name string `json:"name"`
+}
+
 const newContactCategory = "new-contact"
 
 // wireNotifications connects the core's unknown-contact prompt to both an in-app

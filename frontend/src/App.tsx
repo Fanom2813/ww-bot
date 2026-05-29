@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Route, Routes, useNavigate } from "react-router";
 import { Events } from "@wailsio/runtime";
 import { ThemeProvider } from "next-themes";
@@ -9,7 +9,7 @@ import { RequireOnboarded, RequireConnected } from "@/components/RouteGuards";
 import { Onboarding } from "@/components/Onboarding";
 import { ConnectScreen } from "@/components/ConnectScreen";
 import { AppLayout } from "@/components/AppLayout";
-import { NewContactPrompt } from "@/components/dialogs";
+import { NewContactPrompt, ProactiveDialog } from "@/components/dialogs";
 import { Dashboard } from "@/pages/Dashboard";
 import { Approvals } from "@/pages/Approvals";
 import { Contacts } from "@/pages/Contacts";
@@ -21,6 +21,7 @@ import { Settings } from "@/pages/Settings";
 function AppRoutes() {
   const { jid, online } = useWA();
   const navigate = useNavigate();
+  const [reachTarget, setReachTarget] = useState<{ jid: string; name: string } | null>(null);
 
   useEffect(() => {
     const off = Events.On("tray:nav", (e) => {
@@ -29,6 +30,16 @@ function AppRoutes() {
     });
     return () => off?.();
   }, [navigate]);
+
+  useEffect(() => {
+    const off = Events.On("tray:reach-out", (e) => {
+      const raw = Array.isArray(e?.data) ? e.data[0] : e?.data;
+      if (raw && typeof raw === "object" && "jid" in raw && "name" in raw) {
+        setReachTarget({ jid: String(raw.jid), name: String(raw.name) });
+      }
+    });
+    return () => off?.();
+  }, []);
 
   return (
     <>
@@ -56,6 +67,7 @@ function AppRoutes() {
       </Routes>
       <Toaster richColors position="top-right" />
       <NewContactPrompt />
+      <ProactiveDialog target={reachTarget} onClose={() => setReachTarget(null)} />
     </>
   );
 }

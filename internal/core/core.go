@@ -49,6 +49,10 @@ type DraftNotifier func()
 // the UI can append it live instead of polling.
 type ActivityNotifier func()
 
+// ContactsNotifier is called whenever the contact list changes (add/edit/delete)
+// so listeners like the tray submenu can refresh.
+type ContactsNotifier func()
+
 // PendingContact is an unsaved number awaiting a save/ignore decision, surfaced
 // in the UI as an "action needed".
 type PendingContact struct {
@@ -98,6 +102,7 @@ type Core struct {
 	onWorking      []WorkingNotifier
 	onDraft        []DraftNotifier
 	onActivity     []ActivityNotifier
+	onContacts     []ContactsNotifier
 	pendingUnknown map[string]PendingContact // unsaved numbers awaiting a save/ignore decision
 	msgKey         []byte                    // AES key for encrypting stored message history
 
@@ -169,6 +174,26 @@ func (c *Core) OnActivity(fn ActivityNotifier) {
 	c.mu.Lock()
 	c.onActivity = append(c.onActivity, fn)
 	c.mu.Unlock()
+}
+
+// OnContactsChange subscribes to contact-list changes so listeners (e.g. the
+// tray submenu) can refresh.
+func (c *Core) OnContactsChange(fn ContactsNotifier) {
+	if fn == nil {
+		return
+	}
+	c.mu.Lock()
+	c.onContacts = append(c.onContacts, fn)
+	c.mu.Unlock()
+}
+
+func (c *Core) emitContactsChange() {
+	c.mu.RLock()
+	subs := append([]ContactsNotifier(nil), c.onContacts...)
+	c.mu.RUnlock()
+	for _, fn := range subs {
+		fn()
+	}
 }
 
 func (c *Core) emitDraftQueue() {
@@ -805,7 +830,11 @@ func (c *Core) RejectDraft(id int64) error {
 func (c *Core) ListContacts() ([]store.Contact, error) { return c.db.ListContacts(c.ctx) }
 func (c *Core) UpsertContact(ct store.Contact) error {
 	c.DismissContact(ct.JID) // saving resolves any pending "new number" prompt
-	return c.db.UpsertContact(c.ctx, ct)
+	if err := c.db.UpsertContact(c.ctx, ct); err != nil {
+		return err
+	}
+	c.emitContactsChange()
+	return nil
 }
 func (c *Core) ListActivity(limit int) ([]store.Activity, error) {
 	return c.db.ListActivity(c.ctx, limit)
