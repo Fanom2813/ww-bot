@@ -104,18 +104,14 @@ export function Tray() {
         </Button>
       </div>
 
-      {/* Approvals */}
-      <div className="flex max-h-[40%] shrink-0 flex-col overflow-hidden border-b">
-        <div className="flex items-center justify-between px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          <span>Pending approvals</span>
-          {drafts.length > 0 && <span>{drafts.length}</span>}
-        </div>
-        <div className="flex-1 overflow-y-auto px-3 pb-3">
-          {drafts.length === 0 ? (
-            <div className="py-4 text-center text-xs text-muted-foreground">
-              No drafts waiting.
-            </div>
-          ) : (
+      {/* Approvals — only shown when there are pending drafts */}
+      {drafts.length > 0 && (
+        <div className="flex max-h-[40%] shrink-0 flex-col overflow-hidden border-b">
+          <div className="flex items-center justify-between px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <span>Pending approvals</span>
+            <span>{drafts.length}</span>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 pb-3">
             <ul className="space-y-2">
               {drafts.map((d) => (
                 <li key={d.id} className="rounded-md border bg-card p-2 text-xs">
@@ -141,9 +137,9 @@ export function Tray() {
                 </li>
               ))}
             </ul>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Reach out */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
