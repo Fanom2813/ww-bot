@@ -12,9 +12,8 @@ package llm
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
-
-	"wwbot/internal/dbg"
 )
 
 // Role identifies who authored a message.
@@ -137,7 +136,7 @@ func (r *Registry) Complete(ctx context.Context, req Request) (text, provider st
 			}
 			return out, p.Name(), nil
 		}
-		dbg.Printf("[llm] provider %q failed: %v", p.Name(), perr)
+		log.Printf("[llm] provider %q failed: %v", p.Name(), perr)
 		attempts = append(attempts, Attempt{Provider: p.Name(), Err: perr})
 	}
 

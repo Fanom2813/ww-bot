@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"wwbot/internal/dbg"
 )
 
 // cliSandboxDir returns (and lazily creates) an app-owned empty directory used
@@ -97,16 +96,23 @@ func CodexCLI() *CLIAgent {
 // refuses to run in an "untrusted" workspace in headless mode; we set
 // GEMINI_CLI_TRUST_WORKSPACE=true (safe because cmd.Dir is an empty,
 // app-owned sandbox that has no .gemini/.env/.toml/MCP config to load).
-// GeminiCLI runs Gemini in headless -p mode. The CLI's --approval-mode choices
-// are {default, auto_edit, yolo, plan}: only `plan` is a "block tools" mode
-// but it forces deliberation and slows replies, and the others either prompt
-// (no-op in headless = fail) or auto-approve (unsafe). The documented headless
-// default behavior — prompt-then-fail when no terminal is attached — gives us
-// the same "no tool execution" guarantee without the plan-mode latency, so we
-// leave --approval-mode unset. GEMINI_CLI_TRUST_WORKSPACE=true is safe because
-// cmd.Dir is an empty, app-owned sandbox with no project config to load.
+// GeminiCLI runs Gemini in headless -p mode with the prompt piped via stdin.
+//
+// stdin (not a positional arg) is important on Windows: the npm install ships
+// a `gemini.cmd` shim, and cmd.exe argument handling mangles prompts that
+// contain quotes, newlines, or special characters (and Go's escaping for
+// .bat/.cmd was tightened further by CVE-2024-24576). Stdin sidesteps all of
+// that. The Gemini docs confirm `-p` accepts content on stdin in addition to
+// the flag value.
+//
+// On --approval-mode: the choices are {default, auto_edit, yolo, plan}. Only
+// `plan` blocks tools, but it slows replies (deliberation). The headless
+// default — prompt-then-fail with no terminal attached — gives the same "no
+// tool execution" guarantee with no latency cost, so we leave it unset.
+// GEMINI_CLI_TRUST_WORKSPACE=true is safe because cmd.Dir is an empty,
+// app-owned sandbox with no project config to load.
 func GeminiCLI() *CLIAgent {
-	a := NewCLIAgent("gemini-cli", "gemini", []string{"-p"}, false)
+	a := NewCLIAgent("gemini-cli", "gemini", []string{"-p"}, true)
 	a.extraEnv = []string{"GEMINI_CLI_TRUST_WORKSPACE=true"}
 	return a
 }
@@ -128,7 +134,8 @@ func (c *CLIAgent) Complete(ctx context.Context, req Request) (string, error) {
 		args = append(args, prompt)
 	}
 
-	dbg.Printf("[cli] %s: running %q args=%v (promptViaStdin=%v)", c.name, c.bin, args, c.promptViaStdin)
+	log.Printf("[cli] %s: running %q args=%v stdin=%v cwd=%q",
+		c.name, c.bin, args, c.promptViaStdin, cliSandboxDir())
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	// Isolate the subprocess workspace so project-local config files
 	// (.gemini/, .env, .toml commands, MCP configs, project memory) from
@@ -148,6 +155,9 @@ func (c *CLIAgent) Complete(ctx context.Context, req Request) (string, error) {
 	}
 
 	if err := cmd.Run(); err != nil {
+		// Surface the actual stderr (truncated) in the app log so failures
+		// are diagnosable from ww-bot.log without enabling debug builds.
+		log.Printf("[cli] %s: run failed: %v; stderr: %s", c.name, err, truncate(stderr.String(), 800))
 		return "", fmt.Errorf("llm %s: run: %w: %s", c.name, err, truncate(stderr.String(), 300))
 	}
 	out := strings.TrimSpace(stdout.String())
