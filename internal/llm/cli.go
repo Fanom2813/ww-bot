@@ -68,19 +68,22 @@ func NewCLIAgent(name, bin string, args []string, promptViaStdin bool) *CLIAgent
 	return &CLIAgent{name: name, bin: bin, args: args, promptViaStdin: promptViaStdin}
 }
 
-// ClaudeCLI runs Claude Code in print mode with all tools disabled — we only
-// want a chat completion, never shell/file/network actions. `--tools ""` is the
-// documented way to expose an empty tool set.
+// ClaudeCLI runs Claude Code in print mode for a direct text reply. In
+// headless -p mode without --dangerously-skip-permissions, any tool the model
+// tries to invoke needs human approval — which doesn't exist in headless mode
+// — so the call fails before any side effect. Combined with the empty
+// sandbox CWD that's enough; we don't need to pass an explicit --tools list
+// and keep the flags minimal so the call stays as fast as possible.
 func ClaudeCLI() *CLIAgent {
-	return NewCLIAgent("claude-code", "claude", []string{"-p", "--tools", ""}, true)
+	return NewCLIAgent("claude-code", "claude", []string{"-p"}, true)
 }
 
-// CodexCLI runs Codex in exec mode locked to a read-only sandbox so model-
-// generated shell commands can't touch the filesystem or network. Combined
-// with cmd.Dir pointing at our empty sandbox there's nothing meaningful for
-// even a read to expose.
+// CodexCLI runs Codex non-interactively. Same reasoning as Claude: without
+// --dangerously-bypass-approvals-and-sandbox, model-requested commands can't
+// auto-execute in headless mode, so we don't pin a sandbox profile. The empty
+// sandbox CWD makes that safe.
 func CodexCLI() *CLIAgent {
-	return NewCLIAgent("codex", "codex", []string{"exec", "--sandbox", "read-only"}, true)
+	return NewCLIAgent("codex", "codex", []string{"exec"}, true)
 }
 
 // GeminiCLI runs Gemini in headless mode locked to "plan" (read-only) approval
