@@ -27,6 +27,12 @@ func (s *ContactsService) Proactive(jid, topic string) error {
 	return s.core.StartProactive(jid, topic)
 }
 
+// SendDirect sends the given message text to a contact verbatim — no AI. Still
+// flows through the safety gate (typing indicator, rate limits, splitting).
+func (s *ContactsService) SendDirect(jid, text string) error {
+	return s.core.SendDirect(jid, text)
+}
+
 // ApprovalsService manages the draft queue.
 type ApprovalsService struct{ core *core.Core }
 

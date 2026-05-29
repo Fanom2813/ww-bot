@@ -891,6 +891,29 @@ func (c *Core) StartProactive(chatJID, topic string) error {
 	return nil
 }
 
+// SendDirect sends a user-authored message to a contact without involving the
+// brain. It still flows through the safety gate so the typing indicator,
+// multi-part splitting, and rate limits apply. User-triggered, so it bypasses
+// quiet hours.
+func (c *Core) SendDirect(chatJID, text string) error {
+	if strings.TrimSpace(chatJID) == "" {
+		return errors.New("core: send requires a contact")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return errors.New("core: empty message")
+	}
+	contact, _ := c.db.GetContact(c.ctx, chatJID)
+	dbg.Printf("[core] direct send chat=%q -> %q", chatJID, preview(text))
+	if err := c.safetyGate().Enqueue(safety.Job{ToJID: chatJID, Parts: splitMessages(text), BypassQuiet: true}); err != nil {
+		return err
+	}
+	// Keep the conversation memory honest so the next AI reply sees what you sent.
+	c.storeMessage(chatJID, contact.Name, text, true)
+	_ = c.logActivity(c.ctx, "manual", chatJID, preview(text))
+	return nil
+}
+
 // Today returns today's saved context (empty if none).
 func (c *Core) Today() string {
 	txt, _ := c.db.GetDailyContext(c.ctx, time.Now().Format("2006-01-02"))
