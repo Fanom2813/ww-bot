@@ -17,6 +17,7 @@ import { Groups } from "@/pages/Groups";
 import { Schedules } from "@/pages/Schedules";
 import { Activity } from "@/pages/Activity";
 import { Settings } from "@/pages/Settings";
+import { Tray } from "@/pages/Tray";
 
 function AppRoutes() {
   const { jid, online } = useWA();
@@ -44,6 +45,9 @@ function AppRoutes() {
   return (
     <>
       <Routes>
+        {/* Tray popover — second window, no auth guard, no full layout */}
+        <Route path="/tray" element={<Tray />} />
+
         {/* Public: onboarding wizard */}
         <Route path="/onboarding" element={<Onboarding />} />
 

@@ -5,7 +5,6 @@ import (
 	"embed"
 	_ "embed"
 	"log"
-	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -137,7 +136,24 @@ func main() {
 		syncBadge()
 	})
 
-	setupTray(app, win, cr)
+	popover := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "WW Quick",
+		Width:            360,
+		Height:           560,
+		MinWidth:         360,
+		MinHeight:        560,
+		MaxWidth:         360,
+		MaxHeight:        560,
+		Frameless:        true,
+		Hidden:           true,
+		BackgroundColour: application.NewRGB(10, 10, 10),
+		URL:              "/#/tray",
+		Mac: application.MacWindow{
+			Backdrop: application.MacBackdropNormal,
+		},
+	})
+
+	setupTray(app, win, popover, cr)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
@@ -146,7 +162,7 @@ func main() {
 
 // setupTray adds a menu-bar tray icon with Open / Pause / Quit so the bot can
 // run resident in the background.
-func setupTray(app *application.App, win *application.WebviewWindow, cr *core.Core) {
+func setupTray(app *application.App, win, popover *application.WebviewWindow, cr *core.Core) {
 	tray := app.SystemTray.New()
 	tray.SetLabel("WW")
 
@@ -158,78 +174,32 @@ func setupTray(app *application.App, win *application.WebviewWindow, cr *core.Co
 		}
 	}
 
-	reachOut := func(c store.Contact) {
-		win.Show()
-		win.Focus()
-		name := strings.TrimSpace(c.Name)
-		if name == "" {
-			name = c.JID
-		}
-		app.Event.Emit("tray:reach-out", ReachOut{JID: c.JID, Name: name})
+	menu := app.NewMenu()
+	menu.Add("Open full app").OnClick(func(*application.Context) { open("/") })
+	menu.AddSeparator()
+
+	pauseItem := menu.Add("Pause bot")
+	if cr.Paused() {
+		pauseItem.SetLabel("Resume bot")
 	}
-
-	build := func() *application.Menu {
-		menu := app.NewMenu()
-		menu.Add("Open WW Bot").OnClick(func(*application.Context) { open("/") })
-		menu.AddSeparator()
-
-		reach := menu.AddSubmenu("Reach out")
-		contacts, _ := cr.ListContacts()
-		// Only saved contacts in the "auto" tier make sense as quick reach-out
-		// targets; fall back to all contacts if none qualify.
-		shown := make([]store.Contact, 0, len(contacts))
-		for _, c := range contacts {
-			if strings.TrimSpace(c.Name) != "" {
-				shown = append(shown, c)
-			}
-		}
-		if len(shown) == 0 {
-			reach.Add("No contacts yet").SetEnabled(false)
-		} else {
-			// Cap to a reasonable number to keep the menu navigable.
-			const maxItems = 30
-			for i, c := range shown {
-				if i >= maxItems {
-					break
-				}
-				ct := c
-				reach.Add(ct.Name).OnClick(func(*application.Context) { reachOut(ct) })
-			}
-			if len(shown) > maxItems {
-				reach.AddSeparator()
-				reach.Add("More…").OnClick(func(*application.Context) { open("/contacts") })
-			}
-		}
-
-		menu.Add("Approvals").OnClick(func(*application.Context) { open("/approvals") })
-		menu.Add("Activity").OnClick(func(*application.Context) { open("/activity") })
-		menu.Add("Schedules").OnClick(func(*application.Context) { open("/schedules") })
-		menu.AddSeparator()
-
-		pauseItem := menu.Add("Pause bot")
+	pauseItem.OnClick(func(*application.Context) {
 		if cr.Paused() {
+			cr.Resume()
+			pauseItem.SetLabel("Pause bot")
+		} else {
+			cr.Pause()
 			pauseItem.SetLabel("Resume bot")
 		}
-		pauseItem.OnClick(func(*application.Context) {
-			if cr.Paused() {
-				cr.Resume()
-				pauseItem.SetLabel("Pause bot")
-			} else {
-				cr.Pause()
-				pauseItem.SetLabel("Resume bot")
-			}
-		})
+	})
 
-		menu.AddSeparator()
-		menu.Add("Settings").OnClick(func(*application.Context) { open("/settings") })
-		menu.Add("Check for Updates…").OnClick(func(*application.Context) {
-			app.Updater.Check(context.Background())
-		})
-		menu.AddSeparator()
-		menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
-		return menu
-	}
+	menu.AddSeparator()
+	menu.Add("Check for Updates…").OnClick(func(*application.Context) {
+		app.Updater.Check(context.Background())
+	})
+	menu.AddSeparator()
+	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
 
-	tray.SetMenu(build())
-	cr.OnContactsChange(func() { tray.SetMenu(build()) })
+	tray.SetMenu(menu)
+	// Left-click toggles the popover; right-click shows the menu above.
+	tray.AttachWindow(popover)
 }
