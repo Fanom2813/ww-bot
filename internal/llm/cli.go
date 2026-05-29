@@ -68,22 +68,28 @@ func NewCLIAgent(name, bin string, args []string, promptViaStdin bool) *CLIAgent
 	return &CLIAgent{name: name, bin: bin, args: args, promptViaStdin: promptViaStdin}
 }
 
-// ClaudeCLI runs Claude Code in print mode for a direct text reply. In
-// headless -p mode without --dangerously-skip-permissions, any tool the model
-// tries to invoke needs human approval — which doesn't exist in headless mode
-// — so the call fails before any side effect. Combined with the empty
-// sandbox CWD that's enough; we don't need to pass an explicit --tools list
-// and keep the flags minimal so the call stays as fast as possible.
+// ClaudeCLI runs Claude Code in print mode with --permission-mode dontAsk.
+// Per the official docs, dontAsk *silently denies* any tool not explicitly
+// allow-listed and never prompts — exactly what we want for a chat reply that
+// should never take OS-level actions. No latency cost.
 func ClaudeCLI() *CLIAgent {
-	return NewCLIAgent("claude-code", "claude", []string{"-p"}, true)
+	return NewCLIAgent("claude-code", "claude", []string{"-p", "--permission-mode", "dontAsk"}, true)
 }
 
-// CodexCLI runs Codex non-interactively. Same reasoning as Claude: without
-// --dangerously-bypass-approvals-and-sandbox, model-requested commands can't
-// auto-execute in headless mode, so we don't pin a sandbox profile. The empty
-// sandbox CWD makes that safe.
+// CodexCLI runs Codex in exec mode using the configuration the Codex docs
+// explicitly recommend for non-interactive runs:
+//
+//   - `-c approval_policy=never` — the docs literally say "use never for
+//     non-interactive runs" (on-failure is deprecated).
+//   - `--sandbox read-only` — pin the sandbox profile so model-generated shell
+//     commands cannot write or reach the network even if the default changes.
+//   - `--ignore-user-config` — do not load ~/.codex/config.toml, which can
+//     define MCP servers, hooks, and rule overrides that would otherwise be
+//     pulled into our subprocess.
 func CodexCLI() *CLIAgent {
-	return NewCLIAgent("codex", "codex", []string{"exec"}, true)
+	return NewCLIAgent("codex", "codex",
+		[]string{"exec", "-c", "approval_policy=never", "--sandbox", "read-only", "--ignore-user-config"},
+		true)
 }
 
 // GeminiCLI runs Gemini in headless mode locked to "plan" (read-only) approval
@@ -91,12 +97,14 @@ func CodexCLI() *CLIAgent {
 // refuses to run in an "untrusted" workspace in headless mode; we set
 // GEMINI_CLI_TRUST_WORKSPACE=true (safe because cmd.Dir is an empty,
 // app-owned sandbox that has no .gemini/.env/.toml/MCP config to load).
-// GeminiCLI runs Gemini in headless mode for a direct text reply. We do NOT
-// pass --approval-mode plan: that makes the model deliberate and slows replies
-// down. In headless -p mode without an approval flag, the CLI errors out if it
-// tries any tool (there's no interactive prompt to approve), so we still can't
-// be tricked into OS-level actions. GEMINI_CLI_TRUST_WORKSPACE=true is safe
-// because cmd.Dir is an empty, app-owned sandbox with no project config.
+// GeminiCLI runs Gemini in headless -p mode. The CLI's --approval-mode choices
+// are {default, auto_edit, yolo, plan}: only `plan` is a "block tools" mode
+// but it forces deliberation and slows replies, and the others either prompt
+// (no-op in headless = fail) or auto-approve (unsafe). The documented headless
+// default behavior — prompt-then-fail when no terminal is attached — gives us
+// the same "no tool execution" guarantee without the plan-mode latency, so we
+// leave --approval-mode unset. GEMINI_CLI_TRUST_WORKSPACE=true is safe because
+// cmd.Dir is an empty, app-owned sandbox with no project config to load.
 func GeminiCLI() *CLIAgent {
 	a := NewCLIAgent("gemini-cli", "gemini", []string{"-p"}, false)
 	a.extraEnv = []string{"GEMINI_CLI_TRUST_WORKSPACE=true"}

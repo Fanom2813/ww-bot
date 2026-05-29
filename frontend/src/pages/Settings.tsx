@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Events } from "@wailsio/runtime";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Download, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Page } from "@/components/Page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ProviderDialog } from "@/components/dialogs";
-import { ProviderSetting, Settings as SettingsModel, SettingsService } from "@/lib/api";
+import { ProviderSetting, Settings as SettingsModel, SettingsService, UpdaterService } from "@/lib/api";
 
 /** Section is one settings group: a title + subtitle, then its individual fields. */
 function Section({
@@ -63,6 +64,137 @@ function NumberField({
       <FieldLabel>{label}</FieldLabel>
       <Input type="number" value={value} onChange={(e) => onChange(num(e.target.value))} />
     </Field>
+  );
+}
+
+/** UpdatesSection shows the current app version, a manual check button, and
+ *  surfaces a one-click install when a newer release is available. Listens for
+ *  the wails:updater:update-available event so it lights up automatically when
+ *  the startup auto-check finds something. */
+function UpdatesSection() {
+  const [current, setCurrent] = useState<string>("");
+  const [available, setAvailable] = useState<{ version: string; notes?: string } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState<{ percent: number; speed?: number } | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    UpdaterService.CurrentVersion().then(setCurrent).catch(() => {});
+
+    const offAvail = Events.On("wails:updater:update-available", (e) => {
+      const r = Array.isArray(e?.data) ? e.data[0] : e?.data;
+      if (r && typeof r === "object" && "version" in r) {
+        setAvailable({ version: String(r.version), notes: r.notes ? String(r.notes) : undefined });
+      }
+    });
+    const offNone = Events.On("wails:updater:no-update", () => setAvailable(null));
+    const offProg = Events.On("wails:updater:download-progress", (e) => {
+      const p = Array.isArray(e?.data) ? e.data[0] : e?.data;
+      if (p && typeof p === "object") {
+        const pct = "percent" in p ? Number(p.percent) : 0;
+        const sp = "bytesPerSecond" in p ? Number(p.bytesPerSecond) : undefined;
+        setProgress({ percent: pct, speed: sp });
+      }
+    });
+    const offReady = Events.On("wails:updater:update-ready", () => {
+      setReady(true);
+      setInstalling(false);
+    });
+    const offErr = Events.On("wails:updater:error", (e) => {
+      const info = Array.isArray(e?.data) ? e.data[0] : e?.data;
+      const msg =
+        info && typeof info === "object" && "message" in info ? String(info.message) : "Unknown error";
+      toast.error("Updater error", { description: msg });
+      setChecking(false);
+      setInstalling(false);
+    });
+    return () => {
+      offAvail?.();
+      offNone?.();
+      offProg?.();
+      offReady?.();
+      offErr?.();
+    };
+  }, []);
+
+  const check = () => {
+    setChecking(true);
+    UpdaterService.Check()
+      .then((rel) => {
+        if (rel) {
+          setAvailable({ version: rel.version, notes: rel.notes });
+          toast.success(`Update available: ${rel.version}`);
+        } else {
+          setAvailable(null);
+          toast(`You're on the latest version (${current || "?"}).`);
+        }
+      })
+      .catch((e) => toast.error("Check failed", { description: String(e) }))
+      .finally(() => setChecking(false));
+  };
+
+  const install = () => {
+    setInstalling(true);
+    setProgress({ percent: 0 });
+    UpdaterService.DownloadAndInstall()
+      .catch((e) => {
+        toast.error("Install failed", { description: String(e) });
+        setInstalling(false);
+      });
+  };
+
+  return (
+    <Section title="Updates" description="Keep WWAssist up to date with the latest release.">
+      <Field orientation="horizontal">
+        <FieldContent>
+          <FieldLabel>Current version</FieldLabel>
+          <FieldDescription>
+            {current ? `v${current}` : "Loading…"}
+            {available && (
+              <>
+                {" — "}
+                <Badge variant="default">Update available: v{available.version}</Badge>
+              </>
+            )}
+          </FieldDescription>
+        </FieldContent>
+        <Button variant="outline" size="sm" onClick={check} disabled={checking || installing}>
+          <RefreshCw className={checking ? "size-4 animate-spin" : "size-4"} />
+          {checking ? "Checking…" : "Check for updates"}
+        </Button>
+      </Field>
+
+      {available && !ready && (
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel>Install v{available.version}</FieldLabel>
+            <FieldDescription>
+              {installing
+                ? progress
+                  ? `Downloading… ${Math.round(progress.percent)}%`
+                  : "Downloading…"
+                : available.notes
+                  ? available.notes.split("\n")[0]
+                  : "Download and stage the new release."}
+            </FieldDescription>
+          </FieldContent>
+          <Button size="sm" onClick={install} disabled={installing}>
+            <Download className="size-4" />
+            {installing ? "Installing…" : "Install"}
+          </Button>
+        </Field>
+      )}
+
+      {ready && (
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel>Ready to apply</FieldLabel>
+            <FieldDescription>Restart WWAssist to finish updating.</FieldDescription>
+          </FieldContent>
+        </Field>
+      )}
+    </Section>
   );
 }
 
@@ -448,6 +580,9 @@ export function Settings() {
 
         {/* Safety & Quiet hours */}
         <SafetySection safety={s.safety} set={set} />
+
+        {/* App updates */}
+        <UpdatesSection />
       </div>
 
       <ProviderDialog

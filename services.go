@@ -1,6 +1,11 @@
 package main
 
 import (
+	"context"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/updater"
+
 	"wwbot/internal/core"
 	"wwbot/internal/store"
 )
@@ -95,3 +100,32 @@ func (s *ControlService) Paused() bool               { return s.core.Paused() }
 func (s *ControlService) Status() string             { return s.core.Status() }
 func (s *ControlService) SetToday(text string) error { return s.core.SetToday(text) }
 func (s *ControlService) Today() string              { return s.core.Today() }
+
+// UpdaterService exposes the in-app updater to the frontend so the Settings
+// page can display the current version and let the user check / install.
+type UpdaterService struct{ version string }
+
+func (s *UpdaterService) ServiceName() string { return "Updater" }
+
+// CurrentVersion returns the running app's version string (set at build time
+// via -ldflags "-X main.version=…").
+func (s *UpdaterService) CurrentVersion() string { return s.version }
+
+// Check polls the configured providers for a newer release. Returns the
+// pending release when one is available, nil when the app is already up to
+// date, or an error when every provider failed.
+func (s *UpdaterService) Check(ctx context.Context) (*updater.Release, error) {
+	return application.Get().Updater.Check(ctx)
+}
+
+// DownloadAndInstall fetches the release set by the most recent Check, verifies
+// it, and stages it for swap. Emits the wails:updater:* events the UI listens
+// to for progress.
+func (s *UpdaterService) DownloadAndInstall(ctx context.Context) error {
+	return application.Get().Updater.DownloadAndInstall(ctx)
+}
+
+// State returns the current updater lifecycle phase.
+func (s *UpdaterService) State() string {
+	return string(application.Get().Updater.State())
+}

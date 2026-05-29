@@ -80,10 +80,19 @@ jobs:
         with:
           path: artifacts
 
+      # The Wails auto-updater's default asset matcher requires each filename
+      # to contain BOTH the platform substring ('darwin' / 'windows') AND the
+      # arch substring. Stage them under the expected names before upload.
+      - name: Stage release assets
+        run: |
+          mkdir -p release
+          cp artifacts/WWAssist-macOS/WWAssist.dmg                     release/WWAssist-darwin-universal.dmg
+          cp artifacts/WWAssist-Windows-amd64/WWAssist-amd64-installer.exe release/WWAssist-windows-amd64-installer.exe
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/WWAssist-macOS/WWAssist.dmg
-            artifacts/WWAssist-Windows-amd64/WWAssist-amd64-installer.exe
+            release/WWAssist-darwin-universal.dmg
+            release/WWAssist-windows-amd64-installer.exe
           generate_release_notes: true

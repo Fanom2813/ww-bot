@@ -5,6 +5,7 @@ import (
 	"embed"
 	_ "embed"
 	"log"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -74,6 +75,7 @@ func main() {
 			application.NewService(&ControlService{core: cr}),
 			application.NewService(&ScheduleService{core: cr}),
 			application.NewService(&GroupsService{core: cr}),
+			application.NewService(&UpdaterService{version: version}),
 			application.NewService(ns),
 			application.NewService(dk),
 		},
@@ -86,7 +88,12 @@ func main() {
 		},
 	})
 
-	// Auto-update: check GitHub Releases for newer versions.
+	// Auto-update: check GitHub Releases for newer versions. We do a single
+	// check shortly after launch (no background polling — desktop apps are
+	// usually open for hours and one GitHub call per launch is enough). The
+	// wails:updater:update-available event the check emits is what the
+	// Settings page subscribes to for the install prompt; the manual
+	// "Check for updates" button just calls Updater.Check() again.
 	gh, err := github.New(github.Config{Repository: "fanom2813/ww-bot"})
 	if err != nil {
 		log.Printf("updater: %v", err)
@@ -134,6 +141,15 @@ func main() {
 			log.Printf("notification authorization: granted=%v err=%v", ok, err)
 		}
 		syncBadge()
+		// One-shot update check shortly after launch. Delayed a couple of
+		// seconds so it doesn't compete with the QR/connect path on startup;
+		// the frontend listens for wails:updater:update-available.
+		go func() {
+			time.Sleep(3 * time.Second)
+			if _, cerr := app.Updater.Check(context.Background()); cerr != nil {
+				log.Printf("updater: startup check: %v", cerr)
+			}
+		}()
 	})
 
 	popover := app.Window.NewWithOptions(application.WebviewWindowOptions{

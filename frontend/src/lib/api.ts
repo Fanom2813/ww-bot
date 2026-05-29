@@ -8,6 +8,7 @@ export {
   GroupsService,
   ScheduleService,
   SettingsService,
+  UpdaterService,
   WhatsAppService,
 } from "../../bindings/wwbot";
 
