@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"wwbot/internal/dbg"
 )
 
 // Errors returned by Enqueue.
@@ -154,6 +156,7 @@ func (g *Gate) Enqueue(j Job) error {
 
 func (g *Gate) loop() {
 	defer g.wg.Done()
+	defer dbg.Recover("safety.loop")
 	for {
 		select {
 		case <-g.quit:

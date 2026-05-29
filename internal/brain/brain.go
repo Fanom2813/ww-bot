@@ -264,7 +264,7 @@ func (b *Brain) ask(ctx context.Context, in Input) (decision, error) {
 		Messages:    []llm.Message{{Role: llm.User, Content: user}},
 		Temperature: 0.3,
 		JSON:        true,
-		MaxTokens:   600,
+		MaxTokens:   2000,
 	})
 	if err != nil {
 		return decision{}, err

@@ -251,6 +251,7 @@ func (c *Client) Logout(ctx context.Context) error {
 // If the channel closes without a successful scan, PairingExpired is emitted
 // so the frontend can show a retry button.
 func (c *Client) pumpQR(qrChan <-chan whatsmeow.QRChannelItem) {
+	defer dbg.Recover("wa.pumpQR")
 	paired := false
 	for item := range qrChan {
 		switch item.Event {

@@ -18,8 +18,19 @@ package dbg
 import (
 	"log"
 	"os"
+	"runtime/debug"
 	"strings"
 )
+
+// Recover should be deferred at the top of any goroutine. If the goroutine
+// panics, the panic value and stack trace are written to the standard log
+// (which the app tees to ww-bot.log) instead of crashing the process
+// silently. Always-on: unrelated to WWBOT_DEBUG.
+func Recover(where string) {
+	if r := recover(); r != nil {
+		log.Printf("[panic] %s: %v\n%s", where, r, debug.Stack())
+	}
+}
 
 // enabled is resolved once at startup from WWBOT_DEBUG. Values "0", "false",
 // "off", and "" disable; anything else enables.

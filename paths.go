@@ -5,7 +5,17 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 )
+
+// recoverPanic should be deferred at the top of every goroutine we launch so
+// crashes land in ww-bot.log instead of vanishing silently (the -H windowsgui
+// production build has no console). The `where` label identifies the origin.
+func recoverPanic(where string) {
+	if r := recover(); r != nil {
+		log.Printf("[panic] %s: %v\n%s", where, r, debug.Stack())
+	}
+}
 
 // setupFileLogging mirrors stdlib log output to ww-bot.log in the app data
 // dir. With -H windowsgui the OS gives us no console, so log.Fatal failures

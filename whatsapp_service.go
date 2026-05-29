@@ -119,6 +119,7 @@ func (s *WhatsAppService) Logout() error {
 
 // bridge forwards wa events: connection state to the frontend, messages to core.
 func (s *WhatsAppService) bridge(events <-chan wa.Event) {
+	defer recoverPanic("whatsapp.bridge")
 	for e := range events {
 		switch ev := e.(type) {
 		case wa.QR:

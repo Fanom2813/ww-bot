@@ -145,6 +145,7 @@ func main() {
 		// seconds so it doesn't compete with the QR/connect path on startup;
 		// the frontend listens for wails:updater:update-available.
 		go func() {
+			defer recoverPanic("updater startup check")
 			time.Sleep(3 * time.Second)
 			if _, cerr := app.Updater.Check(context.Background()); cerr != nil {
 				log.Printf("updater: startup check: %v", cerr)

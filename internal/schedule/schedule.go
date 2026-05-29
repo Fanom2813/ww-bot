@@ -8,6 +8,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"wwbot/internal/dbg"
 )
 
 type task struct {
@@ -65,6 +67,7 @@ func (s *Scheduler) Stop() {
 
 func (s *Scheduler) runTask(ctx context.Context, t task) {
 	defer s.wg.Done()
+	defer dbg.Recover("schedule.runTask")
 	for {
 		timer := time.NewTimer(time.Until(nextRun(time.Now(), t.hour, t.min)))
 		select {

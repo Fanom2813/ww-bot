@@ -91,11 +91,25 @@ func (o *OpenAICompatible) Complete(ctx context.Context, req Request) (string, e
 		return "", fmt.Errorf("llm %s: no choices in response", o.cfg.Name)
 	}
 	content := strings.TrimSpace(resp.Choices[0].Message.Content)
+	finish := resp.Choices[0].FinishReason
+
+	// Empty content with finish_reason=length almost always means the model
+	// either doesn't understand JSON mode (and burned its budget producing
+	// nothing visible) or hit the cap mid-thought. If we asked for JSON,
+	// retry once without it — the brain's parser tolerates surrounding
+	// prose and code fences, so a free-form response still parses.
+	if content == "" && req.JSON && (finish == "length" || finish == "") {
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{}
+		retry, rerr := o.client.Chat.Completions.New(ctx, params)
+		if rerr == nil && len(retry.Choices) > 0 {
+			content = strings.TrimSpace(retry.Choices[0].Message.Content)
+			finish = retry.Choices[0].FinishReason
+		}
+	}
+
 	if content == "" {
-		// 200 OK but no content — surface why so the registry can fall through and
-		// the cause is visible (e.g. JSON mode unsupported, or token cap hit).
 		return "", fmt.Errorf("llm %s: empty content (finish_reason=%q) — model returned nothing (may not support JSON mode, or hit the token cap)",
-			o.cfg.Name, resp.Choices[0].FinishReason)
+			o.cfg.Name, finish)
 	}
 	return content, nil
 }
