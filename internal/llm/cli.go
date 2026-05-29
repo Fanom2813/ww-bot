@@ -68,18 +68,28 @@ func NewCLIAgent(name, bin string, args []string, promptViaStdin bool) *CLIAgent
 	return &CLIAgent{name: name, bin: bin, args: args, promptViaStdin: promptViaStdin}
 }
 
-// ClaudeCLI runs Claude Code in print mode ("claude -p", prompt on stdin).
-func ClaudeCLI() *CLIAgent { return NewCLIAgent("claude-code", "claude", []string{"-p"}, true) }
+// ClaudeCLI runs Claude Code in print mode with all tools disabled — we only
+// want a chat completion, never shell/file/network actions. `--tools ""` is the
+// documented way to expose an empty tool set.
+func ClaudeCLI() *CLIAgent {
+	return NewCLIAgent("claude-code", "claude", []string{"-p", "--tools", ""}, true)
+}
 
-// CodexCLI runs the Codex CLI non-interactively ("codex exec", prompt on stdin).
-func CodexCLI() *CLIAgent { return NewCLIAgent("codex", "codex", []string{"exec"}, true) }
+// CodexCLI runs Codex in exec mode locked to a read-only sandbox so model-
+// generated shell commands can't touch the filesystem or network. Combined
+// with cmd.Dir pointing at our empty sandbox there's nothing meaningful for
+// even a read to expose.
+func CodexCLI() *CLIAgent {
+	return NewCLIAgent("codex", "codex", []string{"exec", "--sandbox", "read-only"}, true)
+}
 
-// GeminiCLI runs the Gemini CLI ("gemini -p <prompt>"). The Gemini CLI refuses
-// to run in an "untrusted" workspace in headless mode unless either
-// GEMINI_CLI_TRUST_WORKSPACE=true is set or --skip-trust is passed; we ship the
-// env var because it works on every CLI version.
+// GeminiCLI runs Gemini in headless mode locked to "plan" (read-only) approval
+// mode so any tool the model tries to invoke is denied. The Gemini CLI also
+// refuses to run in an "untrusted" workspace in headless mode; we set
+// GEMINI_CLI_TRUST_WORKSPACE=true (safe because cmd.Dir is an empty,
+// app-owned sandbox that has no .gemini/.env/.toml/MCP config to load).
 func GeminiCLI() *CLIAgent {
-	a := NewCLIAgent("gemini-cli", "gemini", []string{"-p"}, false)
+	a := NewCLIAgent("gemini-cli", "gemini", []string{"-p", "--approval-mode", "plan"}, false)
 	a.extraEnv = []string{"GEMINI_CLI_TRUST_WORKSPACE=true"}
 	return a
 }
