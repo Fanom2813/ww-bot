@@ -62,6 +62,13 @@ type SafetySetting struct {
 	// QuietHoursOff disables quiet hours entirely. Inverted so existing settings
 	// (field absent → false) keep quiet hours enabled.
 	QuietHoursOff bool `json:"quietHoursOff,omitempty"`
+	// DebounceQuietSec is how long the bot waits after the last incoming message
+	// before replying, to coalesce typed bursts into one response. 0 means use
+	// the default (3s).
+	DebounceQuietSec int `json:"debounceQuietSec,omitempty"`
+	// DebounceMaxWaitSec caps the total hold time since the first message in a
+	// burst. 0 means use the default (30s).
+	DebounceMaxWaitSec int `json:"debounceMaxWaitSec,omitempty"`
 }
 
 // ScheduledTask is a recurring proactive job (a "cron"): every day at Hour:Min

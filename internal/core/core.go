@@ -204,9 +204,15 @@ func (c *Core) build(s Settings) {
 	c.brn = brain.New(reg, brainConfig(s))
 	c.stt = buildSTT(s.STT)
 	c.gate = c.newGate(s)
-	c.debounce = inbox.New(inbox.Config{
-		Quiet: 30 * time.Second, MaxWait: 3 * time.Minute,
-	}, c.handleBatch)
+	quiet := time.Duration(s.Safety.DebounceQuietSec) * time.Second
+	if quiet <= 0 {
+		quiet = 3 * time.Second
+	}
+	maxWait := time.Duration(s.Safety.DebounceMaxWaitSec) * time.Second
+	if maxWait <= 0 {
+		maxWait = 30 * time.Second
+	}
+	c.debounce = inbox.New(inbox.Config{Quiet: quiet, MaxWait: maxWait}, c.handleBatch)
 }
 
 // newGate builds a safety gate from the current settings.

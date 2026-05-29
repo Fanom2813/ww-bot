@@ -55,10 +55,10 @@ type chatState struct {
 // coalesced batch. Zero config values fall back to sensible defaults.
 func New(cfg Config, onFlush func(Batch)) *Debouncer {
 	if cfg.Quiet <= 0 {
-		cfg.Quiet = 30 * time.Second
+		cfg.Quiet = 3 * time.Second
 	}
 	if cfg.MaxWait <= 0 {
-		cfg.MaxWait = 3 * time.Minute
+		cfg.MaxWait = 30 * time.Second
 	}
 	return &Debouncer{cfg: cfg, onFlush: onFlush, chats: make(map[string]*chatState)}
 }
