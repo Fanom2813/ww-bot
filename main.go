@@ -30,6 +30,7 @@ func init() {
 	application.RegisterEvent[WAEvent]("wa")
 	application.RegisterEvent[Notice]("notice")
 	application.RegisterEvent[UnknownContact]("unknown")
+	application.RegisterEvent[string]("tray:nav")
 }
 
 func main() {
@@ -147,11 +148,22 @@ func setupTray(app *application.App, win *application.WebviewWindow, cr *core.Co
 	tray := app.SystemTray.New()
 	tray.SetLabel("WW")
 
-	menu := app.NewMenu()
-	menu.Add("Open WW Bot").OnClick(func(*application.Context) {
+	open := func(path string) {
 		win.Show()
 		win.Focus()
-	})
+		if path != "" {
+			app.Event.Emit("tray:nav", path)
+		}
+	}
+
+	menu := app.NewMenu()
+	menu.Add("Open WW Bot").OnClick(func(*application.Context) { open("/") })
+	menu.AddSeparator()
+
+	menu.Add("Reach out…").OnClick(func(*application.Context) { open("/contacts") })
+	menu.Add("Approvals").OnClick(func(*application.Context) { open("/approvals") })
+	menu.Add("Activity").OnClick(func(*application.Context) { open("/activity") })
+	menu.Add("Schedules").OnClick(func(*application.Context) { open("/schedules") })
 	menu.AddSeparator()
 
 	pauseItem := menu.Add("Pause bot")
@@ -166,6 +178,7 @@ func setupTray(app *application.App, win *application.WebviewWindow, cr *core.Co
 	})
 
 	menu.AddSeparator()
+	menu.Add("Settings").OnClick(func(*application.Context) { open("/settings") })
 	menu.Add("Check for Updates…").OnClick(func(*application.Context) {
 		app.Updater.Check(context.Background())
 	})

@@ -1,4 +1,6 @@
-import { Route, Routes } from "react-router";
+import { useEffect } from "react";
+import { Route, Routes, useNavigate } from "react-router";
+import { Events } from "@wailsio/runtime";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { WAProvider } from "@/lib/WAContext";
@@ -18,6 +20,15 @@ import { Settings } from "@/pages/Settings";
 
 function AppRoutes() {
   const { jid, online } = useWA();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const off = Events.On("tray:nav", (e) => {
+      const path = typeof e?.data === "string" ? e.data : Array.isArray(e?.data) ? e.data[0] : "";
+      if (path) navigate(path);
+    });
+    return () => off?.();
+  }, [navigate]);
 
   return (
     <>
