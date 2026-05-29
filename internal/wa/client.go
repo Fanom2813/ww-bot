@@ -303,6 +303,13 @@ func (c *Client) onEvent(raw any) {
 	case *events.CallOfferNotice:
 		c.emit(Call{FromJID: v.From.String(), Video: v.Media == "video", Group: v.Type == "group"})
 	case *events.Connected:
+		// Mark the client as online so SendChatPresence (typing indicator)
+		// is actually delivered to peers — whatsmeow silently drops it
+		// otherwise.
+		_ = c.wm.SendPresence(context.Background(), types.PresenceAvailable)
+		c.emit(Connected{JID: c.SelfJID()})
+	case *events.KeepAliveRestored:
+		_ = c.wm.SendPresence(context.Background(), types.PresenceAvailable)
 		c.emit(Connected{JID: c.SelfJID()})
 	case *events.Disconnected:
 		c.emit(Disconnected{})
@@ -310,8 +317,6 @@ func (c *Client) onEvent(raw any) {
 		// Pings stopped getting through (silent internet drop): show offline.
 		// whatsmeow keeps the session and reconnects; this is NOT a logout.
 		c.emit(Disconnected{})
-	case *events.KeepAliveRestored:
-		c.emit(Connected{JID: c.SelfJID()})
 	case *events.LoggedOut:
 		// Genuine server-side logout only (401/403/406 or stream error) — never
 		// fired for network loss. Log the reason so it's clear why re-pair is needed.
