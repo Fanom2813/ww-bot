@@ -148,7 +148,10 @@ func setupTray(app *application.App, win *application.WebviewWindow, cr *core.Co
 	tray.SetLabel("WW")
 
 	menu := app.NewMenu()
-	menu.Add("Open WW Bot").OnClick(func(*application.Context) { win.Show() })
+	menu.Add("Open WW Bot").OnClick(func(*application.Context) {
+		win.Show()
+		win.Focus()
+	})
 	menu.AddSeparator()
 
 	pauseItem := menu.Add("Pause bot")
@@ -170,5 +173,4 @@ func setupTray(app *application.App, win *application.WebviewWindow, cr *core.Co
 	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
 
 	tray.SetMenu(menu)
-	tray.AttachWindow(win)
 }
