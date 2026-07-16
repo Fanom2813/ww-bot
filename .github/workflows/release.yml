@@ -63,12 +63,15 @@ jobs:
         shell: bash
         run: wails3 task windows:package ARCH=${{ matrix.arch }} VERSION="$RELEASE_VERSION"
 
+      # Both uploads are only a handoff to the publish job below, which attaches
+      # the binaries to the GitHub Release; they need not outlive the run.
       - name: Upload macOS artifact
         if: matrix.target == 'darwin'
         uses: actions/upload-artifact@v4
         with:
           name: WWAssist-macOS
           path: bin/WWAssist.dmg
+          retention-days: 5
 
       - name: Upload Windows artifact
         if: matrix.target == 'windows'
@@ -76,6 +79,7 @@ jobs:
         with:
           name: WWAssist-Windows-${{ matrix.arch }}
           path: bin/WWAssist-${{ matrix.arch }}-installer.exe
+          retention-days: 5
 
   publish:
     needs: release
